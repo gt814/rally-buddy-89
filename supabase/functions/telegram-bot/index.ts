@@ -984,9 +984,17 @@ async function handleUpdate(update: any) {
     const startTime = parts[3];
     const endTime = parts[4];
 
-    // Find group by prefix
-    const { data: groups } = await supabase.from("groups").select("id, name").ilike("id", `${groupIdPrefix}%`);
-    const group = groups?.[0];
+    // Find group by prefix or full ID
+    let group: any = null;
+    // Try exact match first
+    const { data: exactMatch } = await supabase.from("groups").select("id, name").eq("id", groupIdPrefix).maybeSingle();
+    if (exactMatch) {
+      group = exactMatch;
+    } else {
+      // Prefix search: fetch all groups and match
+      const { data: allGroups } = await supabase.from("groups").select("id, name");
+      group = (allGroups || []).find((g: any) => g.id.startsWith(groupIdPrefix));
+    }
     if (!group) {
       await sendMessage(chatId, "Группа не найдена.");
       return;
