@@ -600,6 +600,173 @@ export async function handleDeleteGroup(
   await deps.sendMessage(chatId, `✅ Группа «${group.name}» удалена.`);
 }
 
+// ===== Inline admin edit/delete handlers =====
+
+export async function handleAdminEditMenu(deps: Deps, chatId: number, messageId: number, user: any, groupId: string) {
+  const { data: group } = await deps.supabase
+    .from("groups")
+    .select("*")
+    .eq("id", groupId)
+    .single();
+
+  if (!group) return;
+
+  const admin = await isGroupAdmin(deps, user.id, groupId);
+  if (!admin && !user.is_super_admin) {
+    await deps.editMessage(chatId, messageId, "❌ Вы не администратор этой группы.", {
+      inline_keyboard: [[{ text: "« Назад", callback_data: `admin_group_${groupId}` }]],
+    });
+    return;
+  }
+
+  let text = `✏️ <b>Редактирование «${group.name}»</b>\n\n`;
+  text += `📝 Название: ${group.name}\n`;
+  text += `👥 Макс. участников: ${group.max_participants}\n`;
+  text += `⏰ Заморозка: ${group.freeze_hours}ч\n`;
+  text += `🌍 Часовой пояс: ${group.timezone}\n\n`;
+  text += `Выберите параметр для изменения:`;
+
+  await deps.editMessage(chatId, messageId, text, {
+    inline_keyboard: [
+      [{ text: "👥 Макс. участников", callback_data: `aedit_max_${groupId}` }],
+      [{ text: "⏰ Заморозка (часы)", callback_data: `aedit_freeze_${groupId}` }],
+      [{ text: "📝 Название / 🌍 Часовой пояс", callback_data: `aedit_text_${groupId}` }],
+      [{ text: "« Назад", callback_data: `admin_group_${groupId}` }],
+    ],
+  });
+}
+
+export async function handleAdminEditMax(deps: Deps, chatId: number, messageId: number, groupId: string) {
+  const { data: group } = await deps.supabase.from("groups").select("max_participants").eq("id", groupId).single();
+  const current = group?.max_participants || 8;
+
+  const options = [4, 6, 8, 10, 12, 16, 20];
+  const buttons = options.map((v) => ({
+    text: v === current ? `✅ ${v}` : `${v}`,
+    callback_data: `aset_max_${v}_${groupId}`,
+  }));
+
+  // Split into rows of 4
+  const rows: any[][] = [];
+  for (let i = 0; i < buttons.length; i += 4) {
+    rows.push(buttons.slice(i, i + 4));
+  }
+  rows.push([{ text: "« Назад", callback_data: `aedit_${groupId}` }]);
+
+  await deps.editMessage(chatId, messageId, `👥 Выберите макс. количество участников (сейчас: ${current}):`, {
+    inline_keyboard: rows,
+  });
+}
+
+export async function handleAdminEditFreeze(deps: Deps, chatId: number, messageId: number, groupId: string) {
+  const { data: group } = await deps.supabase.from("groups").select("freeze_hours").eq("id", groupId).single();
+  const current = group?.freeze_hours || 4;
+
+  const options = [1, 2, 3, 4, 6, 8, 12, 24];
+  const buttons = options.map((v) => ({
+    text: v === current ? `✅ ${v}ч` : `${v}ч`,
+    callback_data: `aset_freeze_${v}_${groupId}`,
+  }));
+
+  const rows: any[][] = [];
+  for (let i = 0; i < buttons.length; i += 4) {
+    rows.push(buttons.slice(i, i + 4));
+  }
+  rows.push([{ text: "« Назад", callback_data: `aedit_${groupId}` }]);
+
+  await deps.editMessage(chatId, messageId, `⏰ Выберите часы заморозки (сейчас: ${current}):`, {
+    inline_keyboard: rows,
+  });
+}
+
+export async function handleAdminSetField(deps: Deps, chatId: number, messageId: number, groupId: string, field: string, value: number) {
+  const dbField = field === "max" ? "max_participants" : "freeze_hours";
+  await deps.supabase.from("groups").update({ [dbField]: value }).eq("id", groupId);
+
+  const label = field === "max" ? "Макс. участников" : "Заморозка";
+  const suffix = field === "freeze" ? "ч" : "";
+
+  await deps.editMessage(chatId, messageId, `✅ ${label} изменено на <b>${value}${suffix}</b>`, {
+    inline_keyboard: [
+      [{ text: "✏️ Продолжить редактирование", callback_data: `aedit_${groupId}` }],
+      [{ text: "« К группе", callback_data: `admin_group_${groupId}` }],
+    ],
+  });
+}
+
+export async function handleAdminEditText(deps: Deps, chatId: number, messageId: number, groupId: string) {
+  const { data: group } = await deps.supabase.from("groups").select("name").eq("id", groupId).single();
+  const shortId = groupId.substring(0, 8);
+
+  await deps.editMessage(
+    chatId,
+    messageId,
+    `Для изменения названия или часового пояса используйте команды:\n\n` +
+    `📝 <code>/editgroup ${shortId} name Новое название</code>\n` +
+    `🌍 <code>/editgroup ${shortId} timezone Europe/Berlin</code>`,
+    {
+      inline_keyboard: [[{ text: "« Назад", callback_data: `aedit_${groupId}` }]],
+    }
+  );
+}
+
+export async function handleAdminDeleteConfirm(deps: Deps, chatId: number, messageId: number, user: any, groupId: string) {
+  if (!user.is_super_admin) {
+    await deps.editMessage(chatId, messageId, "❌ Только суперадмин может удалять группы.", {
+      inline_keyboard: [[{ text: "« Назад", callback_data: `admin_group_${groupId}` }]],
+    });
+    return;
+  }
+
+  const { data: group } = await deps.supabase.from("groups").select("name").eq("id", groupId).single();
+
+  await deps.editMessage(
+    chatId,
+    messageId,
+    `⚠️ <b>Удаление группы «${group?.name}»</b>\n\nВсе данные будут удалены:\n• Участники и администраторы\n• Расписание и сессии\n• Бронирования и страйки\n\nВы уверены?`,
+    {
+      inline_keyboard: [
+        [
+          { text: "✅ Да, удалить", callback_data: `aconfirm_del_${groupId}` },
+          { text: "❌ Нет", callback_data: `admin_group_${groupId}` },
+        ],
+      ],
+    }
+  );
+}
+
+export async function handleAdminConfirmDelete(deps: Deps, chatId: number, messageId: number, user: any, groupId: string) {
+  if (!user.is_super_admin) {
+    await deps.editMessage(chatId, messageId, "❌ Только суперадмин может удалять группы.", {
+      inline_keyboard: [[{ text: "« Назад", callback_data: `admin_group_${groupId}` }]],
+    });
+    return;
+  }
+
+  const { data: group } = await deps.supabase.from("groups").select("name").eq("id", groupId).single();
+  if (!group) return;
+
+  // Delete related data
+  await deps.supabase.from("group_admins").delete().eq("group_id", groupId);
+  await deps.supabase.from("group_members").delete().eq("group_id", groupId);
+  await deps.supabase.from("schedules").delete().eq("group_id", groupId);
+  const today = new Date().toISOString().split("T")[0];
+  const { data: futureSessions } = await deps.supabase
+    .from("sessions").select("id").eq("group_id", groupId).gte("date", today);
+  for (const s of futureSessions || []) {
+    await deps.supabase.from("bookings")
+      .update({ status: "cancelled", cancelled_at: new Date().toISOString() })
+      .eq("session_id", s.id).in("status", ["active", "waitlist"]);
+  }
+  await deps.supabase.from("sessions").delete().eq("group_id", groupId);
+  await deps.supabase.from("strikes").delete().eq("group_id", groupId);
+  await deps.supabase.from("groups").delete().eq("id", groupId);
+
+  await deps.editMessage(chatId, messageId, `✅ Группа «${group.name}» удалена.`, {
+    inline_keyboard: [[{ text: "« К управлению", callback_data: "admin" }]],
+  });
+}
+
 export async function handleAdminConfirmCancelSession(deps: Deps, chatId: number, messageId: number, sessionId: string) {
   const { data: session } = await deps.supabase
     .from("sessions")

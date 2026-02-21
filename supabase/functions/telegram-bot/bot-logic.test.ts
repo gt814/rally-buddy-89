@@ -22,6 +22,13 @@ import {
   handleEditGroup,
   handleDeleteGroup,
   handleAdminConfirmCancelSession,
+  handleAdminEditMenu,
+  handleAdminEditMax,
+  handleAdminEditFreeze,
+  handleAdminSetField,
+  handleAdminEditText,
+  handleAdminDeleteConfirm,
+  handleAdminConfirmDelete,
 } from "./bot-logic.ts";
 
 // ===== Mock Supabase Client Builder =====
@@ -915,4 +922,154 @@ Deno.test("handleDeleteGroup — удаление с отменой будущи
   await handleDeleteGroup(deps, 123, user, "g1");
 
   assertStringIncludes(sentMessages[0].text, "удалена");
+});
+
+// --- 17. Inline-кнопки: меню редактирования ---
+
+Deno.test("handleAdminEditMenu — показывает параметры группы и кнопки", async () => {
+  const { deps, editedMessages } = createMockDeps({
+    groups: [{ data: { id: "g1", name: "TestGroup", max_participants: 8, freeze_hours: 4, timezone: "Europe/Moscow" } }],
+    group_admins: [{ data: { id: "ga-1" } }],
+  });
+
+  const user = { id: "user-1", is_super_admin: false };
+  await handleAdminEditMenu(deps, 123, 1, user, "g1");
+
+  assertStringIncludes(editedMessages[0].text, "Редактирование");
+  assertStringIncludes(editedMessages[0].text, "TestGroup");
+  const btns = editedMessages[0].reply_markup.inline_keyboard.flat();
+  assertEquals(btns.some((b: any) => b.callback_data.startsWith("aedit_max_")), true);
+});
+
+Deno.test("handleAdminEditMenu — не-админ получает отказ", async () => {
+  const { deps, editedMessages } = createMockDeps({
+    groups: [{ data: { id: "g1", name: "TestGroup" } }],
+    group_admins: [{ data: null }],
+  });
+
+  const user = { id: "user-1", is_super_admin: false };
+  await handleAdminEditMenu(deps, 123, 1, user, "g1");
+
+  assertStringIncludes(editedMessages[0].text, "не администратор");
+});
+
+// --- 18. Inline-кнопки: выбор макс. участников ---
+
+Deno.test("handleAdminEditMax — показывает варианты с текущим значением", async () => {
+  const { deps, editedMessages } = createMockDeps({
+    groups: [{ data: { max_participants: 8 } }],
+  });
+
+  await handleAdminEditMax(deps, 123, 1, "g1");
+
+  assertStringIncludes(editedMessages[0].text, "сейчас: 8");
+  const btns = editedMessages[0].reply_markup.inline_keyboard.flat();
+  assertEquals(btns.some((b: any) => b.text === "✅ 8"), true);
+});
+
+// --- 19. Inline-кнопки: выбор заморозки ---
+
+Deno.test("handleAdminEditFreeze — показывает варианты часов", async () => {
+  const { deps, editedMessages } = createMockDeps({
+    groups: [{ data: { freeze_hours: 4 } }],
+  });
+
+  await handleAdminEditFreeze(deps, 123, 1, "g1");
+
+  assertStringIncludes(editedMessages[0].text, "сейчас: 4");
+  const btns = editedMessages[0].reply_markup.inline_keyboard.flat();
+  assertEquals(btns.some((b: any) => b.text === "✅ 4ч"), true);
+});
+
+// --- 20. Inline-кнопки: установка значения ---
+
+Deno.test("handleAdminSetField — устанавливает max_participants", async () => {
+  const { deps, editedMessages } = createMockDeps({
+    groups: [{ data: null }], // update result
+  });
+
+  await handleAdminSetField(deps, 123, 1, "g1", "max", 12);
+
+  assertStringIncludes(editedMessages[0].text, "Макс. участников");
+  assertStringIncludes(editedMessages[0].text, "12");
+});
+
+Deno.test("handleAdminSetField — устанавливает freeze_hours", async () => {
+  const { deps, editedMessages } = createMockDeps({
+    groups: [{ data: null }],
+  });
+
+  await handleAdminSetField(deps, 123, 1, "g1", "freeze", 6);
+
+  assertStringIncludes(editedMessages[0].text, "Заморозка");
+  assertStringIncludes(editedMessages[0].text, "6ч");
+});
+
+// --- 21. Inline-кнопки: текстовые поля ---
+
+Deno.test("handleAdminEditText — показывает инструкции для /editgroup", async () => {
+  const { deps, editedMessages } = createMockDeps({
+    groups: [{ data: { name: "Group" } }],
+  });
+
+  await handleAdminEditText(deps, 123, 1, "g1-full-uuid");
+
+  assertStringIncludes(editedMessages[0].text, "/editgroup");
+  assertStringIncludes(editedMessages[0].text, "g1-full-");
+});
+
+// --- 22. Inline-кнопки: подтверждение удаления ---
+
+Deno.test("handleAdminDeleteConfirm — показывает подтверждение суперадмину", async () => {
+  const { deps, editedMessages } = createMockDeps({
+    groups: [{ data: { name: "ToDelete" } }],
+  });
+
+  const user = { id: "user-sa", is_super_admin: true };
+  await handleAdminDeleteConfirm(deps, 123, 1, user, "g1");
+
+  assertStringIncludes(editedMessages[0].text, "Удаление группы");
+  assertStringIncludes(editedMessages[0].text, "ToDelete");
+  const btns = editedMessages[0].reply_markup.inline_keyboard.flat();
+  assertEquals(btns.some((b: any) => b.callback_data.startsWith("aconfirm_del_")), true);
+});
+
+Deno.test("handleAdminDeleteConfirm — не-суперадмин получает отказ", async () => {
+  const { deps, editedMessages } = createMockDeps({});
+
+  const user = { id: "user-1", is_super_admin: false };
+  await handleAdminDeleteConfirm(deps, 123, 1, user, "g1");
+
+  assertStringIncludes(editedMessages[0].text, "Только суперадмин");
+});
+
+// --- 23. Inline-кнопки: фактическое удаление ---
+
+Deno.test("handleAdminConfirmDelete — удаляет группу", async () => {
+  const { deps, editedMessages } = createMockDeps({
+    groups: [
+      { data: { id: "g1", name: "Deleted" } },
+      { data: null },
+    ],
+    group_admins: [{ data: null }],
+    group_members: [{ data: null }],
+    schedules: [{ data: null }],
+    sessions: [{ data: [] }],
+    strikes: [{ data: null }],
+  });
+
+  const user = { id: "user-sa", is_super_admin: true };
+  await handleAdminConfirmDelete(deps, 123, 1, user, "g1");
+
+  assertStringIncludes(editedMessages[0].text, "удалена");
+  assertStringIncludes(editedMessages[0].text, "Deleted");
+});
+
+Deno.test("handleAdminConfirmDelete — не-суперадмин получает отказ", async () => {
+  const { deps, editedMessages } = createMockDeps({});
+
+  const user = { id: "user-1", is_super_admin: false };
+  await handleAdminConfirmDelete(deps, 123, 1, user, "g1");
+
+  assertStringIncludes(editedMessages[0].text, "Только суперадмин");
 });
