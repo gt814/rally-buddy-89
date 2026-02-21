@@ -19,6 +19,8 @@ import {
   handleCancelWaitlist,
   handleProfile,
   handleNewGroup,
+  handleEditGroup,
+  handleDeleteGroup,
   handleAdminConfirmCancelSession,
 } from "./bot-logic.ts";
 
@@ -740,4 +742,177 @@ Deno.test("generateSessions — генерирует сессии на осно�
 
   await generateSessions(deps, "g1");
   assertEquals(upsertCalled, true);
+});
+
+// --- 15. Редактирование группы (/editgroup) ---
+
+Deno.test("handleEditGroup — админ меняет название группы", async () => {
+  const { deps, sentMessages } = createMockDeps({
+    groups: [
+      { data: { id: "g1", name: "OldName", max_participants: 8, freeze_hours: 4 } }, // exact match
+    ],
+    group_admins: [{ data: { id: "ga-1" } }], // is admin
+  });
+
+  const user = { id: "user-1", is_super_admin: false };
+  await handleEditGroup(deps, 123, user, "g1", "name", "NewName");
+
+  assertStringIncludes(sentMessages[0].text, "обновлена");
+  assertStringIncludes(sentMessages[0].text, "NewName");
+});
+
+Deno.test("handleEditGroup — админ меняет max_participants", async () => {
+  const { deps, sentMessages } = createMockDeps({
+    groups: [
+      { data: { id: "g1", name: "Group", max_participants: 8, freeze_hours: 4 } },
+    ],
+    group_admins: [{ data: { id: "ga-1" } }],
+  });
+
+  const user = { id: "user-1", is_super_admin: false };
+  await handleEditGroup(deps, 123, user, "g1", "max", "12");
+
+  assertStringIncludes(sentMessages[0].text, "обновлена");
+  assertStringIncludes(sentMessages[0].text, "12");
+});
+
+Deno.test("handleEditGroup — суперадмин может редактировать без роли админа группы", async () => {
+  const { deps, sentMessages } = createMockDeps({
+    groups: [
+      { data: { id: "g1", name: "Group", max_participants: 8, freeze_hours: 4 } },
+    ],
+    group_admins: [{ data: null }], // not group admin
+  });
+
+  const user = { id: "user-sa", is_super_admin: true };
+  await handleEditGroup(deps, 123, user, "g1", "freeze", "6");
+
+  assertStringIncludes(sentMessages[0].text, "обновлена");
+});
+
+Deno.test("handleEditGroup — обычный пользователь не может редактировать", async () => {
+  const { deps, sentMessages } = createMockDeps({
+    groups: [
+      { data: { id: "g1", name: "Group" } },
+    ],
+    group_admins: [{ data: null }],
+  });
+
+  const user = { id: "user-1", is_super_admin: false };
+  await handleEditGroup(deps, 123, user, "g1", "name", "Hack");
+
+  assertStringIncludes(sentMessages[0].text, "не администратор");
+});
+
+Deno.test("handleEditGroup — неизвестное поле", async () => {
+  const { deps, sentMessages } = createMockDeps({
+    groups: [
+      { data: { id: "g1", name: "Group" } },
+    ],
+    group_admins: [{ data: { id: "ga-1" } }],
+  });
+
+  const user = { id: "user-1", is_super_admin: false };
+  await handleEditGroup(deps, 123, user, "g1", "invalid_field", "value");
+
+  assertStringIncludes(sentMessages[0].text, "Неизвестное поле");
+});
+
+Deno.test("handleEditGroup — некорректное числовое значение", async () => {
+  const { deps, sentMessages } = createMockDeps({
+    groups: [
+      { data: { id: "g1", name: "Group" } },
+    ],
+    group_admins: [{ data: { id: "ga-1" } }],
+  });
+
+  const user = { id: "user-1", is_super_admin: false };
+  await handleEditGroup(deps, 123, user, "g1", "max", "abc");
+
+  assertStringIncludes(sentMessages[0].text, "положительным числом");
+});
+
+Deno.test("handleEditGroup — группа не найдена", async () => {
+  const { deps, sentMessages } = createMockDeps({
+    groups: [
+      { data: null }, // exact match not found
+      { data: [] }, // all groups empty
+    ],
+  });
+
+  const user = { id: "user-1", is_super_admin: true };
+  await handleEditGroup(deps, 123, user, "nonexistent", "name", "X");
+
+  assertStringIncludes(sentMessages[0].text, "не найдена");
+});
+
+// --- 16. Удаление группы (/deletegroup) ---
+
+Deno.test("handleDeleteGroup — суперадмин удаляет группу", async () => {
+  const { deps, sentMessages } = createMockDeps({
+    groups: [
+      { data: { id: "g1", name: "ToDelete" } }, // exact match
+      { data: null }, // delete result
+    ],
+    group_admins: [{ data: null }],
+    group_members: [{ data: null }],
+    schedules: [{ data: null }],
+    sessions: [{ data: [] }], // no future sessions
+    strikes: [{ data: null }],
+  });
+
+  const user = { id: "user-sa", is_super_admin: true };
+  await handleDeleteGroup(deps, 123, user, "g1");
+
+  assertStringIncludes(sentMessages[0].text, "удалена");
+  assertStringIncludes(sentMessages[0].text, "ToDelete");
+});
+
+Deno.test("handleDeleteGroup — обычный пользователь не может удалить", async () => {
+  const { deps, sentMessages } = createMockDeps({});
+
+  const user = { id: "user-1", is_super_admin: false };
+  await handleDeleteGroup(deps, 123, user, "g1");
+
+  assertStringIncludes(sentMessages[0].text, "Только суперадмин");
+});
+
+Deno.test("handleDeleteGroup — группа не найдена", async () => {
+  const { deps, sentMessages } = createMockDeps({
+    groups: [
+      { data: null },
+      { data: [] },
+    ],
+  });
+
+  const user = { id: "user-sa", is_super_admin: true };
+  await handleDeleteGroup(deps, 123, user, "nonexistent");
+
+  assertStringIncludes(sentMessages[0].text, "не найдена");
+});
+
+Deno.test("handleDeleteGroup — удаление с отменой будущих бронирований", async () => {
+  const { deps, sentMessages } = createMockDeps({
+    groups: [
+      { data: { id: "g1", name: "GroupWithSessions" } },
+      { data: null },
+    ],
+    group_admins: [{ data: null }],
+    group_members: [{ data: null }],
+    schedules: [{ data: null }],
+    sessions: [
+      { data: [{ id: "s1" }, { id: "s2" }] }, // future sessions
+      { data: null }, // delete sessions
+    ],
+    bookings: [
+      { data: null }, // cancel bookings s1
+      { data: null }, // cancel bookings s2
+    ],
+    strikes: [{ data: null }],
+  });
+
+  const user = { id: "user-sa", is_super_admin: true };
+  await handleDeleteGroup(deps, 123, user, "g1");
+
+  assertStringIncludes(sentMessages[0].text, "удалена");
 });
