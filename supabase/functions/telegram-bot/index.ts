@@ -967,6 +967,108 @@ async function handleUpdate(update: any) {
     }
   }
 
+  // Handle /editgroup command: /editgroup GROUP_ID FIELD VALUE
+  if (update.message?.text?.startsWith("/editgroup ")) {
+    const from = update.message.from;
+    const user = await getOrCreateUser(from);
+    const chatId = update.message.chat.id;
+
+    const parts = update.message.text.split(" ");
+    if (parts.length < 4) {
+      await sendMessage(chatId, "Формат: <code>/editgroup GROUP_ID ПОЛЕ ЗНАЧЕНИЕ</code>\n\nПоля: name, max, freeze, timezone\nПример: <code>/editgroup abc12345 max 10</code>");
+      return;
+    }
+
+    const groupIdPrefix = parts[1];
+    const field = parts[2];
+    const value = parts.slice(3).join(" ");
+
+    // Find group
+    let group: any = null;
+    const { data: exactMatch } = await supabase.from("groups").select("*").eq("id", groupIdPrefix).maybeSingle();
+    if (exactMatch) {
+      group = exactMatch;
+    } else {
+      const { data: allGroups } = await supabase.from("groups").select("*");
+      group = (allGroups || []).find((g: any) => g.id.startsWith(groupIdPrefix));
+    }
+    if (!group) {
+      await sendMessage(chatId, "❌ Группа не найдена.");
+      return;
+    }
+
+    const admin = await isGroupAdmin(user.id, group.id);
+    if (!admin && !user.is_super_admin) {
+      await sendMessage(chatId, "❌ Вы не администратор этой группы.");
+      return;
+    }
+
+    const allowedFields: Record<string, string> = { name: "name", max: "max_participants", freeze: "freeze_hours", timezone: "timezone" };
+    const dbField = allowedFields[field];
+    if (!dbField) {
+      await sendMessage(chatId, "❌ Неизвестное поле. Допустимые: name, max, freeze, timezone.");
+      return;
+    }
+
+    let parsedValue: any = value;
+    if (field === "max" || field === "freeze") {
+      parsedValue = parseInt(value);
+      if (isNaN(parsedValue) || parsedValue <= 0) {
+        await sendMessage(chatId, "❌ Значение должно быть положительным числом.");
+        return;
+      }
+    }
+
+    await supabase.from("groups").update({ [dbField]: parsedValue }).eq("id", group.id);
+    await sendMessage(chatId, `✅ Группа «${group.name}» обновлена.\n\n${field} → <code>${parsedValue}</code>`);
+  }
+
+  // Handle /deletegroup command: /deletegroup GROUP_ID
+  if (update.message?.text?.startsWith("/deletegroup ")) {
+    const from = update.message.from;
+    const user = await getOrCreateUser(from);
+    const chatId = update.message.chat.id;
+
+    if (!user.is_super_admin) {
+      await sendMessage(chatId, "❌ Только суперадмин может удалять группы.");
+      return;
+    }
+
+    const groupIdPrefix = update.message.text.split(" ")[1]?.trim();
+    if (!groupIdPrefix) {
+      await sendMessage(chatId, "Формат: <code>/deletegroup GROUP_ID</code>");
+      return;
+    }
+
+    let group: any = null;
+    const { data: exactMatch } = await supabase.from("groups").select("*").eq("id", groupIdPrefix).maybeSingle();
+    if (exactMatch) {
+      group = exactMatch;
+    } else {
+      const { data: allGroups } = await supabase.from("groups").select("*");
+      group = (allGroups || []).find((g: any) => g.id.startsWith(groupIdPrefix));
+    }
+    if (!group) {
+      await sendMessage(chatId, "❌ Группа не найдена.");
+      return;
+    }
+
+    // Delete related data
+    await supabase.from("group_admins").delete().eq("group_id", group.id);
+    await supabase.from("group_members").delete().eq("group_id", group.id);
+    await supabase.from("schedules").delete().eq("group_id", group.id);
+    const today = new Date().toISOString().split("T")[0];
+    const { data: futureSessions } = await supabase.from("sessions").select("id").eq("group_id", group.id).gte("date", today);
+    for (const s of futureSessions || []) {
+      await supabase.from("bookings").update({ status: "cancelled", cancelled_at: new Date().toISOString() }).eq("session_id", s.id).in("status", ["active", "waitlist"]);
+    }
+    await supabase.from("sessions").delete().eq("group_id", group.id);
+    await supabase.from("strikes").delete().eq("group_id", group.id);
+    await supabase.from("groups").delete().eq("id", group.id);
+
+    await sendMessage(chatId, `✅ Группа «${group.name}» удалена.`);
+  }
+
   // Handle /addschedule command: /addschedule GROUP_ID DAY START END
   if (update.message?.text?.startsWith("/addschedule ")) {
     const from = update.message.from;

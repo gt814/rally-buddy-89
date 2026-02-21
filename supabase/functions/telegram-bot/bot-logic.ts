@@ -474,6 +474,132 @@ export async function handleNewGroup(deps: Deps, chatId: number, user: any, name
   }
 }
 
+export async function handleEditGroup(
+  deps: Deps,
+  chatId: number,
+  user: any,
+  groupIdPrefix: string,
+  field: string,
+  value: string
+) {
+  // Find group by prefix
+  let group: any = null;
+  const { data: exactMatch } = await deps.supabase
+    .from("groups")
+    .select("*")
+    .eq("id", groupIdPrefix)
+    .maybeSingle();
+  if (exactMatch) {
+    group = exactMatch;
+  } else {
+    const { data: allGroups } = await deps.supabase.from("groups").select("*");
+    group = (allGroups || []).find((g: any) => g.id.startsWith(groupIdPrefix));
+  }
+
+  if (!group) {
+    await deps.sendMessage(chatId, "❌ Группа не найдена.");
+    return;
+  }
+
+  // Check admin
+  const admin = await isGroupAdmin(deps, user.id, group.id);
+  if (!admin && !user.is_super_admin) {
+    await deps.sendMessage(chatId, "❌ Вы не администратор этой группы.");
+    return;
+  }
+
+  const allowedFields: Record<string, string> = {
+    name: "name",
+    max: "max_participants",
+    freeze: "freeze_hours",
+    timezone: "timezone",
+  };
+
+  const dbField = allowedFields[field];
+  if (!dbField) {
+    await deps.sendMessage(
+      chatId,
+      "❌ Неизвестное поле. Допустимые: <code>name</code>, <code>max</code>, <code>freeze</code>, <code>timezone</code>."
+    );
+    return;
+  }
+
+  let parsedValue: any = value;
+  if (field === "max" || field === "freeze") {
+    parsedValue = parseInt(value);
+    if (isNaN(parsedValue) || parsedValue <= 0) {
+      await deps.sendMessage(chatId, "❌ Значение должно быть положительным числом.");
+      return;
+    }
+  }
+
+  await deps.supabase
+    .from("groups")
+    .update({ [dbField]: parsedValue })
+    .eq("id", group.id);
+
+  await deps.sendMessage(
+    chatId,
+    `✅ Группа «${group.name}» обновлена.\n\n${field} → <code>${parsedValue}</code>`
+  );
+}
+
+export async function handleDeleteGroup(
+  deps: Deps,
+  chatId: number,
+  user: any,
+  groupIdPrefix: string
+) {
+  if (!user.is_super_admin) {
+    await deps.sendMessage(chatId, "❌ Только суперадмин может удалять группы.");
+    return;
+  }
+
+  // Find group by prefix
+  let group: any = null;
+  const { data: exactMatch } = await deps.supabase
+    .from("groups")
+    .select("*")
+    .eq("id", groupIdPrefix)
+    .maybeSingle();
+  if (exactMatch) {
+    group = exactMatch;
+  } else {
+    const { data: allGroups } = await deps.supabase.from("groups").select("*");
+    group = (allGroups || []).find((g: any) => g.id.startsWith(groupIdPrefix));
+  }
+
+  if (!group) {
+    await deps.sendMessage(chatId, "❌ Группа не найдена.");
+    return;
+  }
+
+  // Delete related data in order
+  await deps.supabase.from("group_admins").delete().eq("group_id", group.id);
+  await deps.supabase.from("group_members").delete().eq("group_id", group.id);
+  await deps.supabase.from("schedules").delete().eq("group_id", group.id);
+  // Cancel all future sessions and their bookings
+  const today = new Date().toISOString().split("T")[0];
+  const { data: futureSessions } = await deps.supabase
+    .from("sessions")
+    .select("id")
+    .eq("group_id", group.id)
+    .gte("date", today);
+  
+  for (const s of futureSessions || []) {
+    await deps.supabase
+      .from("bookings")
+      .update({ status: "cancelled", cancelled_at: new Date().toISOString() })
+      .eq("session_id", s.id)
+      .in("status", ["active", "waitlist"]);
+  }
+  await deps.supabase.from("sessions").delete().eq("group_id", group.id);
+  await deps.supabase.from("strikes").delete().eq("group_id", group.id);
+  await deps.supabase.from("groups").delete().eq("id", group.id);
+
+  await deps.sendMessage(chatId, `✅ Группа «${group.name}» удалена.`);
+}
+
 export async function handleAdminConfirmCancelSession(deps: Deps, chatId: number, messageId: number, sessionId: string) {
   const { data: session } = await deps.supabase
     .from("sessions")
