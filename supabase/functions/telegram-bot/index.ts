@@ -684,6 +684,7 @@ async function handleAdminGroup(chatId: number, messageId: number, user: any, gr
 
   const buttons = [
     [{ text: "📅 Расписание группы", callback_data: `admin_sched_${groupId}` }],
+    [{ text: "📅 Управление расписанием", callback_data: `asched_list_${groupId}` }],
     [{ text: "👥 Участники", callback_data: `admin_members_${groupId}` }],
     [{ text: "⚠️ Страйки", callback_data: `admin_strikes_${groupId}` }],
     [{ text: "🔗 Новая инвайт-ссылка", callback_data: `admin_newinvite_${groupId}` }],
@@ -998,6 +999,135 @@ async function handleUpdate(update: any) {
           [{ text: "« Назад", callback_data: `admin_group_${groupId}` }],
         ],
       });
+    } else if (data.startsWith("asched_confirm_del_")) {
+      // asched_confirm_del_<scheduleId>_<groupId>
+      const rest = data.replace("asched_confirm_del_", "");
+      const parts = rest.split("_");
+      const scheduleId = parts[0];
+      const groupId = parts.slice(1).join("_");
+      // Check admin
+      const admin = await isGroupAdmin(user.id, groupId);
+      if (!admin && !user.is_super_admin) return;
+      // Cancel future sessions linked to schedule
+      const today = new Date().toISOString().split("T")[0];
+      const { data: futureSessions } = await supabase.from("sessions").select("id").eq("schedule_id", scheduleId).gte("date", today);
+      for (const s of futureSessions || []) {
+        await supabase.from("bookings").update({ status: "cancelled", cancelled_at: new Date().toISOString() }).eq("session_id", s.id).in("status", ["active", "waitlist"]);
+      }
+      await supabase.from("sessions").delete().eq("schedule_id", scheduleId).gte("date", today);
+      await supabase.from("schedules").delete().eq("id", scheduleId);
+      await editMessage(chatId, messageId, "✅ Расписание и связанные будущие сессии удалены.", {
+        inline_keyboard: [
+          [{ text: "📅 К расписанию", callback_data: `asched_list_${groupId}` }],
+          [{ text: "« К группе", callback_data: `admin_group_${groupId}` }],
+        ],
+      });
+    } else if (data.startsWith("asched_del_")) {
+      // asched_del_<scheduleId>_<groupId>
+      const rest = data.replace("asched_del_", "");
+      const parts = rest.split("_");
+      const scheduleId = parts[0];
+      const groupId = parts.slice(1).join("_");
+      const { data: schedule } = await supabase.from("schedules").select("*").eq("id", scheduleId).single();
+      const DAYS_FULL = ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"];
+      if (!schedule) {
+        await editMessage(chatId, messageId, "❌ Расписание не найдено.", {
+          inline_keyboard: [[{ text: "« Назад", callback_data: `asched_list_${groupId}` }]],
+        });
+        return;
+      }
+      await editMessage(chatId, messageId,
+        `⚠️ Удалить расписание?\n\n${DAYS_FULL[schedule.day_of_week]} ${formatTime(schedule.start_time)}–${formatTime(schedule.end_time)}\n\nБудущие сессии по этому шаблону также будут удалены.`,
+        {
+          inline_keyboard: [
+            [
+              { text: "✅ Да, удалить", callback_data: `asched_confirm_del_${scheduleId}_${groupId}` },
+              { text: "❌ Нет", callback_data: `asched_list_${groupId}` },
+            ],
+          ],
+        }
+      );
+    } else if (data.startsWith("asched_save_")) {
+      // asched_save_<day>_<startTime>_<endTime>_<groupId>
+      const rest = data.replace("asched_save_", "");
+      const parts = rest.split("_");
+      const day = parseInt(parts[0]);
+      const startTime = parts[1];
+      const endTime = parts[2];
+      const groupId = parts.slice(3).join("_");
+      const DAYS_FULL = ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"];
+      await supabase.from("schedules").insert({ group_id: groupId, day_of_week: day, start_time: startTime, end_time: endTime });
+      await generateSessions(groupId);
+      await editMessage(chatId, messageId,
+        `✅ Расписание добавлено!\n\n${DAYS_FULL[day]} ${startTime}–${endTime}\n\nСессии сгенерированы на 2 недели вперёд.`,
+        {
+          inline_keyboard: [
+            [{ text: "➕ Добавить ещё", callback_data: `asched_add_${groupId}` }],
+            [{ text: "📅 К расписанию", callback_data: `asched_list_${groupId}` }],
+            [{ text: "« К группе", callback_data: `admin_group_${groupId}` }],
+          ],
+        }
+      );
+    } else if (data.startsWith("asched_end_")) {
+      // asched_end_<day>_<startTime>_<groupId>
+      const rest = data.replace("asched_end_", "");
+      const parts = rest.split("_");
+      const day = parseInt(parts[0]);
+      const startTime = parts[1];
+      const groupId = parts.slice(2).join("_");
+      const DAYS_FULL = ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"];
+      const PRESET_END = ["09:00", "10:00", "11:00", "12:00", "13:00", "15:00", "17:00", "18:00", "19:00", "20:00", "21:00", "22:00", "23:00"];
+      const validEndTimes = PRESET_END.filter(t => t > startTime);
+      const buttons: any[][] = [];
+      for (let i = 0; i < validEndTimes.length; i += 4) {
+        buttons.push(validEndTimes.slice(i, i + 4).map(t => ({ text: t, callback_data: `asched_save_${day}_${startTime}_${t}_${groupId}` })));
+      }
+      buttons.push([{ text: "« Назад", callback_data: `asched_start_${day}_${groupId}` }]);
+      await editMessage(chatId, messageId, `⏰ ${DAYS_FULL[day]}, начало ${startTime} — выберите время окончания:`, { inline_keyboard: buttons });
+    } else if (data.startsWith("asched_start_")) {
+      // asched_start_<day>_<groupId>
+      const rest = data.replace("asched_start_", "");
+      const underIdx = rest.indexOf("_");
+      const day = parseInt(rest.substring(0, underIdx));
+      const groupId = rest.substring(underIdx + 1);
+      const DAYS_FULL = ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"];
+      const PRESET_START = ["08:00", "09:00", "10:00", "11:00", "12:00", "14:00", "16:00", "17:00", "18:00", "19:00", "20:00", "21:00"];
+      const buttons: any[][] = [];
+      for (let i = 0; i < PRESET_START.length; i += 4) {
+        buttons.push(PRESET_START.slice(i, i + 4).map(t => ({ text: t, callback_data: `asched_end_${day}_${t}_${groupId}` })));
+      }
+      buttons.push([{ text: "« Назад", callback_data: `asched_add_${groupId}` }]);
+      await editMessage(chatId, messageId, `⏰ ${DAYS_FULL[day]} — выберите время начала:`, { inline_keyboard: buttons });
+    } else if (data.startsWith("asched_add_")) {
+      const groupId = data.replace("asched_add_", "");
+      const DAYS_FULL = ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"];
+      const dayPairs = [[1, 2], [3, 4], [5, 6], [0]];
+      const buttons: any[][] = [];
+      for (const pair of dayPairs) {
+        buttons.push(pair.map(d => ({ text: DAYS_FULL[d], callback_data: `asched_start_${d}_${groupId}` })));
+      }
+      buttons.push([{ text: "« Назад", callback_data: `asched_list_${groupId}` }]);
+      await editMessage(chatId, messageId, "📅 Выберите день недели:", { inline_keyboard: buttons });
+    } else if (data.startsWith("asched_list_")) {
+      const groupId = data.replace("asched_list_", "");
+      const admin = await isGroupAdmin(user.id, groupId);
+      if (!admin && !user.is_super_admin) return;
+      const DAYS_FULL = ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"];
+      const { data: schedules } = await supabase.from("schedules").select("*").eq("group_id", groupId).order("day_of_week").order("start_time");
+      let text = "📅 <b>Шаблоны расписания</b>\n\n";
+      const buttons: any[][] = [];
+      if (!schedules || schedules.length === 0) {
+        text += "Расписание пока не настроено.\n";
+      } else {
+        for (const s of schedules) {
+          text += `• ${DAYS_FULL[s.day_of_week]} ${formatTime(s.start_time)}–${formatTime(s.end_time)}\n`;
+          buttons.push([{ text: `🗑 ${DAYS_RU[s.day_of_week]} ${formatTime(s.start_time)}–${formatTime(s.end_time)}`, callback_data: `asched_del_${s.id}_${groupId}` }]);
+        }
+      }
+      text += "\nНажмите ➕ чтобы добавить расписание на новый день.";
+      buttons.push([{ text: "➕ Добавить расписание", callback_data: `asched_add_${groupId}` }]);
+      buttons.push([{ text: "« Назад", callback_data: `admin_group_${groupId}` }]);
+      await editMessage(chatId, messageId, text, { inline_keyboard: buttons });
     } else if (data.startsWith("adel_")) {
       const groupId = data.replace("adel_", "");
       if (!user.is_super_admin) {

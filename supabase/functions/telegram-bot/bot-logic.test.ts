@@ -29,6 +29,13 @@ import {
   handleAdminEditText,
   handleAdminDeleteConfirm,
   handleAdminConfirmDelete,
+  handleAdminScheduleTemplates,
+  handleAdminAddScheduleDay,
+  handleAdminAddScheduleStart,
+  handleAdminAddScheduleEnd,
+  handleAdminSaveSchedule,
+  handleAdminDeleteScheduleConfirm,
+  handleAdminConfirmDeleteSchedule,
 } from "./bot-logic.ts";
 
 // ===== Mock Supabase Client Builder =====
@@ -1072,4 +1079,189 @@ Deno.test("handleAdminConfirmDelete — не-суперадмин получае
   await handleAdminConfirmDelete(deps, 123, 1, user, "g1");
 
   assertStringIncludes(editedMessages[0].text, "Только суперадмин");
+});
+
+// --- 24. Управление расписанием: просмотр шаблонов ---
+
+Deno.test("handleAdminScheduleTemplates — показывает пустое расписание", async () => {
+  const { deps, editedMessages } = createMockDeps({
+    group_admins: [{ data: { id: "ga-1" } }],
+    schedules: [{ data: [] }],
+  });
+
+  const user = { id: "user-1", is_super_admin: false };
+  await handleAdminScheduleTemplates(deps, 123, 1, user, "g1");
+
+  assertStringIncludes(editedMessages[0].text, "Шаблоны расписания");
+  assertStringIncludes(editedMessages[0].text, "не настроено");
+  const btns = editedMessages[0].reply_markup.inline_keyboard.flat();
+  assertEquals(btns.some((b: any) => b.callback_data.startsWith("asched_add_")), true);
+});
+
+Deno.test("handleAdminScheduleTemplates — показывает существующие шаблоны с кнопками удаления", async () => {
+  const { deps, editedMessages } = createMockDeps({
+    group_admins: [{ data: { id: "ga-1" } }],
+    schedules: [{
+      data: [
+        { id: "sch1", day_of_week: 1, start_time: "19:00:00", end_time: "21:00:00" },
+        { id: "sch2", day_of_week: 3, start_time: "18:00:00", end_time: "20:00:00" },
+      ],
+    }],
+  });
+
+  const user = { id: "user-1", is_super_admin: false };
+  await handleAdminScheduleTemplates(deps, 123, 1, user, "g1");
+
+  assertStringIncludes(editedMessages[0].text, "Понедельник");
+  assertStringIncludes(editedMessages[0].text, "Среда");
+  const btns = editedMessages[0].reply_markup.inline_keyboard.flat();
+  assertEquals(btns.filter((b: any) => b.callback_data.startsWith("asched_del_")).length, 2);
+});
+
+Deno.test("handleAdminScheduleTemplates — не-админ получает отказ", async () => {
+  const { deps, editedMessages } = createMockDeps({
+    group_admins: [{ data: null }],
+  });
+
+  const user = { id: "user-1", is_super_admin: false };
+  await handleAdminScheduleTemplates(deps, 123, 1, user, "g1");
+
+  assertStringIncludes(editedMessages[0].text, "не администратор");
+});
+
+// --- 25. Управление расписанием: выбор дня ---
+
+Deno.test("handleAdminAddScheduleDay — показывает все дни недели", async () => {
+  const { deps, editedMessages } = createMockDeps({});
+
+  await handleAdminAddScheduleDay(deps, 123, 1, "g1");
+
+  assertStringIncludes(editedMessages[0].text, "Выберите день");
+  const btns = editedMessages[0].reply_markup.inline_keyboard.flat();
+  assertEquals(btns.some((b: any) => b.text === "Понедельник"), true);
+  assertEquals(btns.some((b: any) => b.text === "Суббота"), true);
+  assertEquals(btns.some((b: any) => b.text === "Воскресенье"), true);
+});
+
+// --- 26. Управление расписанием: выбор времени начала ---
+
+Deno.test("handleAdminAddScheduleStart — показывает временные слоты", async () => {
+  const { deps, editedMessages } = createMockDeps({});
+
+  await handleAdminAddScheduleStart(deps, 123, 1, 1, "g1");
+
+  assertStringIncludes(editedMessages[0].text, "Понедельник");
+  assertStringIncludes(editedMessages[0].text, "время начала");
+  const btns = editedMessages[0].reply_markup.inline_keyboard.flat();
+  assertEquals(btns.some((b: any) => b.text === "19:00"), true);
+});
+
+// --- 27. Управление расписанием: выбор времени окончания ---
+
+Deno.test("handleAdminAddScheduleEnd — фильтрует только времена после начала", async () => {
+  const { deps, editedMessages } = createMockDeps({});
+
+  await handleAdminAddScheduleEnd(deps, 123, 1, 1, "19:00", "g1");
+
+  assertStringIncludes(editedMessages[0].text, "время окончания");
+  const btns = editedMessages[0].reply_markup.inline_keyboard.flat();
+  // No times <= 19:00
+  assertEquals(btns.every((b: any) => b.text === "« Назад" || b.text > "19:00"), true);
+  assertEquals(btns.some((b: any) => b.text === "20:00"), true);
+  assertEquals(btns.some((b: any) => b.text === "21:00"), true);
+});
+
+// --- 28. Управление расписанием: сохранение ---
+
+Deno.test("handleAdminSaveSchedule — создаёт расписание и генерирует сессии", async () => {
+  let insertCalled = false;
+  let upsertCalled = false;
+  const mockSupabase = {
+    from: (table: string) => {
+      const chain: any = {
+        select: () => chain,
+        insert: () => { if (table === "schedules") insertCalled = true; return chain; },
+        upsert: () => { upsertCalled = true; return chain; },
+        eq: () => chain,
+        order: () => chain,
+        single: () => {
+          if (table === "groups") return Promise.resolve({ data: { max_participants: 8 } });
+          return Promise.resolve({ data: null });
+        },
+        then: (resolve: any) => {
+          if (table === "schedules") return resolve({ data: [] });
+          return resolve({ data: null });
+        },
+      };
+      return chain;
+    },
+  };
+
+  const editedMessages: any[] = [];
+  const deps: Deps = {
+    supabase: mockSupabase,
+    sendMessage: async () => {},
+    editMessage: async (_cid, _mid, text, rm) => { editedMessages.push({ text, reply_markup: rm }); },
+    answerCallback: async () => {},
+    superAdminIds: [],
+  };
+
+  await handleAdminSaveSchedule(deps, 123, 1, 2, "19:00", "21:00", "g1");
+
+  assertEquals(insertCalled, true);
+  assertStringIncludes(editedMessages[0].text, "Расписание добавлено");
+  assertStringIncludes(editedMessages[0].text, "Вторник");
+  assertStringIncludes(editedMessages[0].text, "19:00–21:00");
+  const btns = editedMessages[0].reply_markup.inline_keyboard.flat();
+  assertEquals(btns.some((b: any) => b.text === "➕ Добавить ещё"), true);
+});
+
+// --- 29. Управление расписанием: подтверждение удаления ---
+
+Deno.test("handleAdminDeleteScheduleConfirm — показывает подтверждение", async () => {
+  const { deps, editedMessages } = createMockDeps({
+    schedules: [{ data: { id: "sch1", day_of_week: 5, start_time: "18:00:00", end_time: "20:00:00" } }],
+  });
+
+  await handleAdminDeleteScheduleConfirm(deps, 123, 1, "sch1", "g1");
+
+  assertStringIncludes(editedMessages[0].text, "Удалить расписание");
+  assertStringIncludes(editedMessages[0].text, "Пятница");
+  const btns = editedMessages[0].reply_markup.inline_keyboard.flat();
+  assertEquals(btns.some((b: any) => b.callback_data.startsWith("asched_confirm_del_")), true);
+});
+
+Deno.test("handleAdminDeleteScheduleConfirm — расписание не найдено", async () => {
+  const { deps, editedMessages } = createMockDeps({
+    schedules: [{ data: null }],
+  });
+
+  await handleAdminDeleteScheduleConfirm(deps, 123, 1, "nonexistent", "g1");
+
+  assertStringIncludes(editedMessages[0].text, "не найдено");
+});
+
+// --- 30. Управление расписанием: фактическое удаление ---
+
+Deno.test("handleAdminConfirmDeleteSchedule — удаляет расписание и будущие сессии", async () => {
+  const { deps, editedMessages } = createMockDeps({
+    sessions: [{ data: [{ id: "s1" }, { id: "s2" }] }, { data: null }],
+    bookings: [{ data: null }, { data: null }],
+    schedules: [{ data: null }],
+  });
+
+  await handleAdminConfirmDeleteSchedule(deps, 123, 1, "sch1", "g1");
+
+  assertStringIncludes(editedMessages[0].text, "Расписание и связанные будущие сессии удалены");
+});
+
+Deno.test("handleAdminConfirmDeleteSchedule — удаляет расписание без будущих сессий", async () => {
+  const { deps, editedMessages } = createMockDeps({
+    sessions: [{ data: [] }, { data: null }],
+    schedules: [{ data: null }],
+  });
+
+  await handleAdminConfirmDeleteSchedule(deps, 123, 1, "sch1", "g1");
+
+  assertStringIncludes(editedMessages[0].text, "удалены");
 });
