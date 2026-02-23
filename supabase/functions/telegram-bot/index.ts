@@ -852,19 +852,19 @@ async function handleUpdate(update: any) {
     } else if (data.startsWith("admin_group_")) {
       const groupId = data.replace("admin_group_", "");
       await handleAdminGroup(chatId, messageId, user, groupId);
-    } else if (data.startsWith("admin_sched_")) {
-      const groupId = data.replace("admin_sched_", "");
-      await handleAdminSchedule(chatId, messageId, user, groupId);
-    } else if (data.startsWith("admin_cancel_session_")) {
-      const sessionId = data.replace("admin_cancel_session_", "");
-      await handleAdminCancelSession(chatId, messageId, sessionId);
-    } else if (data.startsWith("admin_confirm_cancel_")) {
-      const sessionId = data.replace("admin_confirm_cancel_", "");
-      await handleAdminConfirmCancelSession(chatId, messageId, sessionId);
     } else if (data.startsWith("admin_sched_fromcancel_")) {
       const sessionId = data.replace("admin_sched_fromcancel_", "");
       const { data: session } = await supabase.from("sessions").select("group_id").eq("id", sessionId).single();
       if (session) await handleAdminSchedule(chatId, messageId, user, session.group_id);
+    } else if (data.startsWith("admin_confirm_cancel_")) {
+      const sessionId = data.replace("admin_confirm_cancel_", "");
+      await handleAdminConfirmCancelSession(chatId, messageId, sessionId);
+    } else if (data.startsWith("admin_cancel_session_")) {
+      const sessionId = data.replace("admin_cancel_session_", "");
+      await handleAdminCancelSession(chatId, messageId, sessionId);
+    } else if (data.startsWith("admin_sched_")) {
+      const groupId = data.replace("admin_sched_", "");
+      await handleAdminSchedule(chatId, messageId, user, groupId);
     } else if (data === "sa_create_group") {
       await sendMessage(chatId, "Отправьте название новой группы текстовым сообщением.\n\nФормат: <code>/newgroup Название группы</code>");
     } else if (data === "sa_all_groups") {
