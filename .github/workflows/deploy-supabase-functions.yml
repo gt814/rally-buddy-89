@@ -56,17 +56,34 @@ jobs:
             echo "ref=${ref}" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Detect migration changes
+        id: migrations
+        run: |
+          set -euo pipefail
+          before="${{ github.event.before }}"
+          after="${{ github.sha }}"
+          if [ -z "${before}" ] || [ "${before}" = "0000000000000000000000000000000000000000" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git diff --name-only "${before}" "${after}" | grep -q '^supabase/migrations/'; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Deploy database migrations
+        if: steps.migrations.outputs.changed == 'true'
         run: |
           set -euo pipefail
           ref="${{ steps.project.outputs.ref }}"
           mkdir -p supabase/.temp
           pw_enc=$(jq -rn --arg v "${SUPABASE_DB_PASSWORD}" '$v|@uri')
-          tx_pooler_db_url="postgresql://postgres.${ref}:${pw_enc}@aws-1-eu-central-1.pooler.supabase.com:6543/postgres?sslmode=require"
-          session_pooler_db_url="postgresql://postgres.${ref}:${pw_enc}@aws-1-eu-central-1.pooler.supabase.com:5432/postgres?sslmode=require"
+          tx_pooler_db_url="postgresql://postgres.${ref}:${pw_enc}@aws-1-eu-central-1.pooler.supabase.com:6543/postgres?sslmode=require&connect_timeout=30"
+          session_pooler_db_url="postgresql://postgres.${ref}:${pw_enc}@aws-1-eu-central-1.pooler.supabase.com:5432/postgres?sslmode=require&connect_timeout=30"
 
-          attempts=3
-          delay=15
+          attempts=6
+          delay=20
           for i in $(seq 1 "${attempts}"); do
             echo "Running migrations attempt ${i}/${attempts}..."
             if supabase db push --db-url "${tx_pooler_db_url}" --debug; then
@@ -86,6 +103,10 @@ jobs:
 
           echo "Migration push failed after ${attempts} attempts."
           exit 1
+
+      - name: Skip migrations (no changes)
+        if: steps.migrations.outputs.changed != 'true'
+        run: echo "No changes in supabase/migrations/**. Skipping db push."
 
   deploy-functions:
     needs: deploy-migrations
