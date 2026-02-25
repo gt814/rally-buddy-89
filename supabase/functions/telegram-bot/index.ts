@@ -707,6 +707,7 @@ async function handleAdminSchedule(chatId: number, messageId: number, user: any,
     .from("sessions")
     .select("*")
     .eq("group_id", groupId)
+    .eq("status", "scheduled")
     .gte("date", today)
     .order("date")
     .order("start_time")
@@ -769,21 +770,37 @@ async function handleAdminConfirmCancelSession(chatId: number, messageId: number
 
   await supabase.from("sessions").update({ status: "cancelled" }).eq("id", sessionId);
 
-  // Notify all booked users
+  // Collect all active/waitlist users first, then cancel bookings and notify them.
   const { data: bookings } = await supabase
     .from("bookings")
-    .select("*, bot_users(telegram_id)")
+    .select("id, user_id")
     .eq("session_id", sessionId)
     .in("status", ["active", "waitlist"]);
 
+  const userIds = Array.from(new Set((bookings || []).map((b: any) => b.user_id).filter(Boolean)));
+  let usersById: Record<string, any> = {};
+
+  if (userIds.length > 0) {
+    const { data: users } = await supabase
+      .from("bot_users")
+      .select("id, telegram_id")
+      .in("id", userIds);
+    usersById = Object.fromEntries((users || []).map((u: any) => [u.id, u]));
+  }
+
   for (const b of bookings || []) {
-    if ((b as any).bot_users?.telegram_id) {
+    await supabase
+      .from("bookings")
+      .update({ status: "cancelled", cancelled_at: new Date().toISOString() })
+      .eq("id", b.id);
+
+    const recipient = usersById[(b as any).user_id];
+    if (recipient?.telegram_id) {
       await sendMessage(
-        (b as any).bot_users.telegram_id,
+        recipient.telegram_id,
         `❌ Тренировка отменена администратором:\n\n📅 ${formatDate(session.date)}, ${formatTime(session.start_time)}–${formatTime(session.end_time)}`
       );
     }
-    await supabase.from("bookings").update({ status: "cancelled" }).eq("id", b.id);
   }
 
   await editMessage(chatId, messageId, "✅ Тренировка отменена. Участники уведомлены.", {

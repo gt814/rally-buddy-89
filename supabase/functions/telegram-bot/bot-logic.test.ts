@@ -688,12 +688,20 @@ Deno.test("handleAdminConfirmCancelSession — отменяет и уведом�
     bookings: [
       {
         data: [
-          { id: "b1", bot_users: { telegram_id: 111 } },
-          { id: "b2", bot_users: { telegram_id: 222 } },
+          { id: "b1", user_id: "u1" },
+          { id: "b2", user_id: "u2" },
         ],
       },
       { data: null }, // update b1
       { data: null }, // update b2
+    ],
+    bot_users: [
+      {
+        data: [
+          { id: "u1", telegram_id: 111 },
+          { id: "u2", telegram_id: 222 },
+        ],
+      },
     ],
   });
 
@@ -707,6 +715,66 @@ Deno.test("handleAdminConfirmCancelSession — отменяет и уведом�
 
   // Confirmation to admin
   assertStringIncludes(editedMessages[0].text, "Тренировка отменена");
+});
+
+Deno.test("handleAdminConfirmCancelSession — сохраняет время отмены в бронированиях", async () => {
+  const bookingUpdates: any[] = [];
+
+  const mockSupabase = {
+    from: (table: string) => {
+      let selectCalled = false;
+      const chain: any = {
+        select: () => {
+          selectCalled = true;
+          return chain;
+        },
+        update: (payload: any) => {
+          if (table === "bookings") bookingUpdates.push(payload);
+          return chain;
+        },
+        eq: () => chain,
+        in: () => chain,
+        single: () => {
+          if (table === "sessions") {
+            return Promise.resolve({
+              data: {
+                id: "s1",
+                group_id: "g1",
+                date: "2025-03-01",
+                start_time: "19:00:00",
+                end_time: "21:00:00",
+              },
+            });
+          }
+          return Promise.resolve({ data: null });
+        },
+        then: (resolve: any) => {
+          if (table === "bookings" && selectCalled) {
+            return resolve({ data: [{ id: "b1", user_id: "u1" }] });
+          }
+          if (table === "bot_users") {
+            return resolve({ data: [{ id: "u1", telegram_id: 111 }] });
+          }
+          return resolve({ data: null });
+        },
+      };
+      return chain;
+    },
+  };
+
+  const deps: Deps = {
+    supabase: mockSupabase,
+    sendMessage: async () => {},
+    editMessage: async () => {},
+    answerCallback: async () => {},
+    superAdminIds: [],
+  };
+
+  await handleAdminConfirmCancelSession(deps, 123, 1, "s1");
+
+  assertEquals(bookingUpdates.length, 1);
+  assertEquals(bookingUpdates[0].status, "cancelled");
+  assertEquals(typeof bookingUpdates[0].cancelled_at, "string");
 });
 
 // --- 14. Генерация сессий ---

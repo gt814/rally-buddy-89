@@ -972,18 +972,33 @@ export async function handleAdminConfirmCancelSession(deps: Deps, chatId: number
 
   const { data: bookings } = await deps.supabase
     .from("bookings")
-    .select("*, bot_users(telegram_id)")
+    .select("id, user_id")
     .eq("session_id", sessionId)
     .in("status", ["active", "waitlist"]);
 
+  const userIds = Array.from(new Set((bookings || []).map((b: any) => b.user_id).filter(Boolean)));
+  let usersById: Record<string, any> = {};
+  if (userIds.length > 0) {
+    const { data: users } = await deps.supabase
+      .from("bot_users")
+      .select("id, telegram_id")
+      .in("id", userIds);
+    usersById = Object.fromEntries((users || []).map((u: any) => [u.id, u]));
+  }
+
   for (const b of bookings || []) {
-    if ((b as any).bot_users?.telegram_id) {
+    await deps.supabase
+      .from("bookings")
+      .update({ status: "cancelled", cancelled_at: new Date().toISOString() })
+      .eq("id", b.id);
+
+    const recipient = usersById[(b as any).user_id];
+    if (recipient?.telegram_id) {
       await deps.sendMessage(
-        (b as any).bot_users.telegram_id,
+        recipient.telegram_id,
         `❌ Тренировка отменена администратором:\n\n📅 ${formatDate(session.date)}, ${formatTime(session.start_time)}–${formatTime(session.end_time)}`
       );
     }
-    await deps.supabase.from("bookings").update({ status: "cancelled" }).eq("id", b.id);
   }
 
   await deps.editMessage(chatId, messageId, "✅ Тренировка отменена. Участники уведомлены.", {
