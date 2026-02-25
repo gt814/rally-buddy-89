@@ -63,29 +63,33 @@ async function runGeneration(supabase: any): Promise<any[]> {
     const { data: schedules } = await supabase.from("schedules").select().eq("group_id", group.id);
     if (!schedules || schedules.length === 0) continue;
 
-    const today = new Date();
-    const horizon = new Date(today);
-    horizon.setDate(horizon.getDate() + 14);
+    // Fixed "now" for deterministic tests:
+    // 2025-02-15 is Saturday, so next week is 2025-02-17..2025-02-23 (Mon..Sun)
+    const now = new Date("2025-02-15T11:00:00Z");
+    const currentDay = now.getUTCDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+    const daysUntilNextMonday = currentDay === 1 ? 7 : (8 - currentDay) % 7;
+    const nextWeekMonday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    nextWeekMonday.setUTCDate(nextWeekMonday.getUTCDate() + daysUntilNextMonday);
 
     for (const schedule of schedules) {
-      const current = new Date(today);
-      while (current <= horizon) {
-        if (current.getDay() === schedule.day_of_week) {
-          const dateStr = current.toISOString().split("T")[0];
-          await supabase.from("sessions").upsert(
-            {
-              group_id: group.id,
-              schedule_id: schedule.id,
-              date: dateStr,
-              start_time: schedule.start_time,
-              end_time: schedule.end_time,
-              max_participants: group.max_participants,
-            },
-            { onConflict: "group_id,date,start_time" }
-          );
-        }
-        current.setDate(current.getDate() + 1);
-      }
+      const dayOfWeek = Number(schedule.day_of_week);
+      if (Number.isNaN(dayOfWeek) || dayOfWeek < 0 || dayOfWeek > 6) continue;
+      const dayOffset = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+      const sessionDate = new Date(nextWeekMonday);
+      sessionDate.setUTCDate(nextWeekMonday.getUTCDate() + dayOffset);
+      const dateStr = sessionDate.toISOString().split("T")[0];
+
+      await supabase.from("sessions").upsert(
+        {
+          group_id: group.id,
+          schedule_id: schedule.id,
+          date: dateStr,
+          start_time: schedule.start_time,
+          end_time: schedule.end_time,
+          max_participants: group.max_participants,
+        },
+        { onConflict: "group_id,date,start_time" }
+      );
     }
   }
   return upsertCalls;
@@ -114,10 +118,12 @@ Deno.test("generate-weekly-sessions — generates sessions for schedule", async 
     },
   });
   const calls = await runGeneration(supabase);
-  assertEquals(calls.length >= 1, true);
+  assertEquals(calls.length, 1);
   assertEquals(calls[0].data.group_id, "g1");
   assertEquals(calls[0].data.max_participants, 6);
   assertEquals(calls[0].data.start_time, "19:00");
+  // Wed of next week from 2025-02-15 => 2025-02-19
+  assertEquals(calls[0].data.date, "2025-02-19");
 });
 
 Deno.test("generate-weekly-sessions — handles multiple groups", async () => {
@@ -134,6 +140,9 @@ Deno.test("generate-weekly-sessions — handles multiple groups", async () => {
   const calls = await runGeneration(supabase);
   const g1 = calls.filter((c: any) => c.data.group_id === "g1");
   const g2 = calls.filter((c: any) => c.data.group_id === "g2");
-  assertEquals(g1.length >= 1, true);
-  assertEquals(g2.length >= 1, true);
+  assertEquals(g1.length, 1);
+  assertEquals(g2.length, 1);
+  // Mon and Fri of next week from 2025-02-15
+  assertEquals(g1[0].data.date, "2025-02-17");
+  assertEquals(g2[0].data.date, "2025-02-21");
 });
