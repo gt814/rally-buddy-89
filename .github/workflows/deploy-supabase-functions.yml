@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+      SUPABASE_PROJECT_ID: ${{ vars.SUPABASE_PROJECT_ID }}
       SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
     steps:
       - name: Checkout
@@ -66,7 +66,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+      SUPABASE_PROJECT_ID: ${{ vars.SUPABASE_PROJECT_ID }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      SUPER_ADMIN_IDS: ${{ vars.SUPER_ADMIN_IDS }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -75,6 +77,10 @@ jobs:
         run: |
           if [ -z "${SUPABASE_ACCESS_TOKEN}" ]; then
             echo "SUPABASE_ACCESS_TOKEN secret is required"
+            exit 1
+          fi
+          if [ -z "${TELEGRAM_BOT_TOKEN}" ]; then
+            echo "TELEGRAM_BOT_TOKEN secret is required"
             exit 1
           fi
 
@@ -97,6 +103,19 @@ jobs:
             echo "ref=${ref}" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Sync function secrets
+        run: |
+          if [ -n "${SUPER_ADMIN_IDS}" ]; then
+            supabase secrets set \
+              TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN}" \
+              SUPER_ADMIN_IDS="${SUPER_ADMIN_IDS}" \
+              --project-ref "${{ steps.project.outputs.ref }}"
+          else
+            supabase secrets set \
+              TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN}" \
+              --project-ref "${{ steps.project.outputs.ref }}"
+          fi
+
       - name: Deploy all edge functions
         run: |
           set -euo pipefail
@@ -106,3 +125,20 @@ jobs:
             echo "Deploying function: ${fn}"
             supabase functions deploy "${fn}" --project-ref "${{ steps.project.outputs.ref }}"
           done
+
+      - name: Set Telegram webhook
+        run: |
+          set -euo pipefail
+          WEBHOOK_URL="https://${{ steps.project.outputs.ref }}.functions.supabase.co/telegram-bot"
+          echo "Setting webhook to: ${WEBHOOK_URL}"
+          RESPONSE=$(curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
+            -H "Content-Type: application/json" \
+            -d "{\"url\":\"${WEBHOOK_URL}\",\"drop_pending_updates\":false}")
+          echo "${RESPONSE}"
+          echo "${RESPONSE}" | grep -q '"ok":true'
+
+      - name: Verify Telegram webhook
+        run: |
+          set -euo pipefail
+          INFO=$(curl -sS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getWebhookInfo")
+          echo "${INFO}"
