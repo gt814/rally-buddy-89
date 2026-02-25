@@ -58,8 +58,26 @@ jobs:
 
       - name: Deploy database migrations
         run: |
-          supabase link --project-ref "${{ steps.project.outputs.ref }}"
-          supabase db push --linked --password "${SUPABASE_DB_PASSWORD}"
+          set -euo pipefail
+          ref="${{ steps.project.outputs.ref }}"
+          supabase link --project-ref "${ref}"
+
+          attempts=3
+          delay=15
+          for i in $(seq 1 "${attempts}"); do
+            echo "Running migrations attempt ${i}/${attempts}..."
+            if supabase db push --linked --password "${SUPABASE_DB_PASSWORD}" --debug; then
+              echo "Migrations applied successfully."
+              exit 0
+            fi
+            if [ "${i}" -lt "${attempts}" ]; then
+              echo "Migration push failed. Retrying in ${delay}s..."
+              sleep "${delay}"
+            fi
+          done
+
+          echo "Migration push failed after ${attempts} attempts."
+          exit 1
 
   deploy-functions:
     needs: deploy-migrations
