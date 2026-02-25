@@ -60,21 +60,22 @@ jobs:
         run: |
           set -euo pipefail
           ref="${{ steps.project.outputs.ref }}"
+          mkdir -p supabase/.temp
           pw_enc=$(jq -rn --arg v "${SUPABASE_DB_PASSWORD}" '$v|@uri')
-          pooler_db_url="postgresql://postgres.${ref}:${pw_enc}@aws-1-eu-central-1.pooler.supabase.com:5432/postgres?sslmode=require"
-          direct_db_url="postgresql://postgres:${pw_enc}@db.${ref}.supabase.co:5432/postgres?sslmode=require"
+          tx_pooler_db_url="postgresql://postgres.${ref}:${pw_enc}@aws-1-eu-central-1.pooler.supabase.com:6543/postgres?sslmode=require"
+          session_pooler_db_url="postgresql://postgres.${ref}:${pw_enc}@aws-1-eu-central-1.pooler.supabase.com:5432/postgres?sslmode=require"
 
           attempts=3
           delay=15
           for i in $(seq 1 "${attempts}"); do
             echo "Running migrations attempt ${i}/${attempts}..."
-            if supabase db push --db-url "${pooler_db_url}" --debug; then
+            if supabase db push --db-url "${tx_pooler_db_url}" --debug; then
               echo "Migrations applied successfully."
               exit 0
             fi
-            echo "Pooler connection failed, trying direct database host..."
-            if supabase db push --db-url "${direct_db_url}" --debug; then
-              echo "Migrations applied successfully via direct host."
+            echo "Transaction pooler failed, trying session pooler..."
+            if supabase db push --db-url "${session_pooler_db_url}" --debug; then
+              echo "Migrations applied successfully via session pooler."
               exit 0
             fi
             if [ "${i}" -lt "${attempts}" ]; then
