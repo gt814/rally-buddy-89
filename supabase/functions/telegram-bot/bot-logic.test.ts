@@ -35,7 +35,9 @@ import {
   handleAdminScheduleTemplates,
   handleAdminAddScheduleDay,
   handleAdminAddScheduleStart,
+  handleAdminAddScheduleStartMinute,
   handleAdminAddScheduleEnd,
+  handleAdminAddScheduleEndMinute,
   handleAdminSaveSchedule,
   handleAdminDeleteScheduleConfirm,
   handleAdminConfirmDeleteSchedule,
@@ -1255,30 +1257,53 @@ Deno.test("handleAdminAddScheduleDay — показывает все дни не
 
 // --- 26. Управление расписанием: выбор времени начала ---
 
-Deno.test("handleAdminAddScheduleStart — показывает временные слоты", async () => {
+Deno.test("handleAdminAddScheduleStart — показывает часы начала", async () => {
   const { deps, editedMessages } = createMockDeps({});
 
   await handleAdminAddScheduleStart(deps, 123, 1, 1, "g1");
 
   assertStringIncludes(editedMessages[0].text, "Понедельник");
-  assertStringIncludes(editedMessages[0].text, "время начала");
+  assertStringIncludes(editedMessages[0].text, "час начала");
   const btns = editedMessages[0].reply_markup.inline_keyboard.flat();
-  assertEquals(btns.some((b: any) => b.text === "19:00"), true);
+  assertEquals(btns.some((b: any) => b.text === "08"), true);
+  assertEquals(btns.some((b: any) => b.text === "23"), true);
 });
 
 // --- 27. Управление расписанием: выбор времени окончания ---
 
-Deno.test("handleAdminAddScheduleEnd — фильтрует только времена после начала", async () => {
+Deno.test("handleAdminAddScheduleStartMinute — показывает минуты начала", async () => {
   const { deps, editedMessages } = createMockDeps({});
 
-  await handleAdminAddScheduleEnd(deps, 123, 1, 1, "19:00", "g1");
+  await handleAdminAddScheduleStartMinute(deps, 123, 1, 1, "19", "g1");
 
-  assertStringIncludes(editedMessages[0].text, "время окончания");
+  assertStringIncludes(editedMessages[0].text, "минуты начала");
   const btns = editedMessages[0].reply_markup.inline_keyboard.flat();
-  // No times <= 19:00
-  assertEquals(btns.every((b: any) => b.text === "« Назад" || b.text > "19:00"), true);
-  assertEquals(btns.some((b: any) => b.text === "20:00"), true);
-  assertEquals(btns.some((b: any) => b.text === "21:00"), true);
+  assertEquals(btns.some((b: any) => b.text === "00"), true);
+  assertEquals(btns.some((b: any) => b.text === "55"), true);
+});
+
+Deno.test("handleAdminAddScheduleEnd — показывает часы окончания не раньше старта", async () => {
+  const { deps, editedMessages } = createMockDeps({});
+
+  await handleAdminAddScheduleEnd(deps, 123, 1, 1, "19:35", "g1");
+
+  assertStringIncludes(editedMessages[0].text, "час окончания");
+  const btns = editedMessages[0].reply_markup.inline_keyboard.flat();
+  assertEquals(btns.some((b: any) => b.text === "19"), true);
+  assertEquals(btns.some((b: any) => b.text === "23"), true);
+  assertEquals(btns.some((b: any) => b.text === "18"), false);
+});
+
+Deno.test("handleAdminAddScheduleEndMinute — фильтрует минуты окончания в том же часу", async () => {
+  const { deps, editedMessages } = createMockDeps({});
+
+  await handleAdminAddScheduleEndMinute(deps, 123, 1, 1, "19:35", "19", "g1");
+
+  assertStringIncludes(editedMessages[0].text, "минуты окончания");
+  const btns = editedMessages[0].reply_markup.inline_keyboard.flat();
+  assertEquals(btns.some((b: any) => b.text === "35"), false);
+  assertEquals(btns.some((b: any) => b.text === "40"), true);
+  assertEquals(btns.some((b: any) => b.text === "55"), true);
 });
 
 // --- 28. Управление расписанием: сохранение ---

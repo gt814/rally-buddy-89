@@ -15,6 +15,8 @@ const MONTHS_RU = [
   "января", "февраля", "марта", "апреля", "мая", "июня",
   "июля", "августа", "сентября", "октября", "ноября", "декабря",
 ];
+const SCHEDULE_HOURS = Array.from({ length: 16 }, (_, i) => String(i + 8).padStart(2, "0"));
+const SCHEDULE_MINUTES = Array.from({ length: 12 }, (_, i) => String(i * 5).padStart(2, "0"));
 
 // ===== Telegram API helpers =====
 async function sendMessage(chatId: number, text: string, reply_markup?: any) {
@@ -1229,43 +1231,87 @@ async function handleUpdate(update: any) {
           ],
         }
       );
-    } else if (data.startsWith("asched_end_")) {
-      // asched_end_<day>_<startTime>_<groupId>
-      const rest = data.replace("asched_end_", "");
+    } else if (data.startsWith("asched_end_min_")) {
+      // asched_end_min_<day>_<startTime>_<endHour>_<groupId>
+      const rest = data.replace("asched_end_min_", "");
+      const parts = rest.split("_");
+      const day = parseInt(parts[0]);
+      const startTime = parts[1];
+      const endHour = parts[2];
+      const groupId = parts.slice(3).join("_");
+      const DAYS_FULL = ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"];
+      const [startHour, startMinute] = startTime.split(":").map((v) => parseInt(v));
+      const endHourNum = parseInt(endHour);
+      const validEndMinutes = SCHEDULE_MINUTES.filter((minute) => endHourNum > startHour || parseInt(minute) > startMinute);
+      const buttons: any[][] = [];
+      for (let i = 0; i < validEndMinutes.length; i += 4) {
+        buttons.push(validEndMinutes.slice(i, i + 4).map((minute) => ({
+          text: minute,
+          callback_data: `asched_save_${day}_${startTime}_${endHour}:${minute}_${groupId}`,
+        })));
+      }
+      buttons.push([{ text: "« Назад", callback_data: `asched_end_hour_${day}_${startTime}_${groupId}` }]);
+      await editMessage(chatId, messageId, `⏰ ${DAYS_FULL[day]}, начало ${startTime}, ${endHour}:__ — выберите минуты окончания:`, { inline_keyboard: buttons });
+    } else if (data.startsWith("asched_end_hour_")) {
+      // asched_end_hour_<day>_<startTime>_<groupId>
+      const rest = data.replace("asched_end_hour_", "");
       const parts = rest.split("_");
       const day = parseInt(parts[0]);
       const startTime = parts[1];
       const groupId = parts.slice(2).join("_");
       const DAYS_FULL = ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"];
-      const PRESET_END = ["09:00", "10:00", "11:00", "12:00", "13:00", "15:00", "17:00", "18:00", "19:00", "20:00", "21:00", "22:00", "23:00"];
-      const validEndTimes = PRESET_END.filter(t => t > startTime);
+      const [startHour] = startTime.split(":");
+      const startHourNum = parseInt(startHour);
+      const validEndHours = SCHEDULE_HOURS.filter((hour) => parseInt(hour) >= startHourNum);
       const buttons: any[][] = [];
-      for (let i = 0; i < validEndTimes.length; i += 4) {
-        buttons.push(validEndTimes.slice(i, i + 4).map(t => ({ text: t, callback_data: `asched_save_${day}_${startTime}_${t}_${groupId}` })));
+      for (let i = 0; i < validEndHours.length; i += 4) {
+        buttons.push(validEndHours.slice(i, i + 4).map((hour) => ({
+          text: hour,
+          callback_data: `asched_end_min_${day}_${startTime}_${hour}_${groupId}`,
+        })));
       }
-      buttons.push([{ text: "« Назад", callback_data: `asched_start_${day}_${groupId}` }]);
-      await editMessage(chatId, messageId, `⏰ ${DAYS_FULL[day]}, начало ${startTime} — выберите время окончания:`, { inline_keyboard: buttons });
-    } else if (data.startsWith("asched_start_")) {
-      // asched_start_<day>_<groupId>
-      const rest = data.replace("asched_start_", "");
+      buttons.push([{ text: "« Назад", callback_data: `asched_start_min_${day}_${startHour}_${groupId}` }]);
+      await editMessage(chatId, messageId, `⏰ ${DAYS_FULL[day]}, начало ${startTime} — выберите час окончания:`, { inline_keyboard: buttons });
+    } else if (data.startsWith("asched_start_min_")) {
+      // asched_start_min_<day>_<startHour>_<groupId>
+      const rest = data.replace("asched_start_min_", "");
+      const parts = rest.split("_");
+      const day = parseInt(parts[0]);
+      const startHour = parts[1];
+      const groupId = parts.slice(2).join("_");
+      const DAYS_FULL = ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"];
+      const buttons: any[][] = [];
+      for (let i = 0; i < SCHEDULE_MINUTES.length; i += 4) {
+        buttons.push(SCHEDULE_MINUTES.slice(i, i + 4).map((minute) => ({
+          text: minute,
+          callback_data: `asched_end_hour_${day}_${startHour}:${minute}_${groupId}`,
+        })));
+      }
+      buttons.push([{ text: "« Назад", callback_data: `asched_start_hour_${day}_${groupId}` }]);
+      await editMessage(chatId, messageId, `⏰ ${DAYS_FULL[day]}, ${startHour}:__ — выберите минуты начала:`, { inline_keyboard: buttons });
+    } else if (data.startsWith("asched_start_hour_")) {
+      // asched_start_hour_<day>_<groupId>
+      const rest = data.replace("asched_start_hour_", "");
       const underIdx = rest.indexOf("_");
       const day = parseInt(rest.substring(0, underIdx));
       const groupId = rest.substring(underIdx + 1);
       const DAYS_FULL = ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"];
-      const PRESET_START = ["08:00", "09:00", "10:00", "11:00", "12:00", "14:00", "16:00", "17:00", "18:00", "19:00", "20:00", "21:00"];
       const buttons: any[][] = [];
-      for (let i = 0; i < PRESET_START.length; i += 4) {
-        buttons.push(PRESET_START.slice(i, i + 4).map(t => ({ text: t, callback_data: `asched_end_${day}_${t}_${groupId}` })));
+      for (let i = 0; i < SCHEDULE_HOURS.length; i += 4) {
+        buttons.push(SCHEDULE_HOURS.slice(i, i + 4).map((hour) => ({
+          text: hour,
+          callback_data: `asched_start_min_${day}_${hour}_${groupId}`,
+        })));
       }
       buttons.push([{ text: "« Назад", callback_data: `asched_add_${groupId}` }]);
-      await editMessage(chatId, messageId, `⏰ ${DAYS_FULL[day]} — выберите время начала:`, { inline_keyboard: buttons });
+      await editMessage(chatId, messageId, `⏰ ${DAYS_FULL[day]} — выберите час начала:`, { inline_keyboard: buttons });
     } else if (data.startsWith("asched_add_")) {
       const groupId = data.replace("asched_add_", "");
       const DAYS_FULL = ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"];
       const dayPairs = [[1, 2], [3, 4], [5, 6], [0]];
       const buttons: any[][] = [];
       for (const pair of dayPairs) {
-        buttons.push(pair.map(d => ({ text: DAYS_FULL[d], callback_data: `asched_start_${d}_${groupId}` })));
+        buttons.push(pair.map(d => ({ text: DAYS_FULL[d], callback_data: `asched_start_hour_${d}_${groupId}` })));
       }
       buttons.push([{ text: "« Назад", callback_data: `asched_list_${groupId}` }]);
       await editMessage(chatId, messageId, "📅 Выберите день недели:", { inline_keyboard: buttons });

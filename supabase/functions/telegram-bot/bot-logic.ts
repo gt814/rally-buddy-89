@@ -884,8 +884,8 @@ export async function handleAdminConfirmDelete(deps: Deps, chatId: number, messa
 // ===== Schedule management handlers =====
 
 const DAYS_FULL_RU = ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"];
-const PRESET_START_TIMES = ["08:00", "09:00", "10:00", "11:00", "12:00", "14:00", "16:00", "17:00", "18:00", "19:00", "20:00", "21:00"];
-const PRESET_END_TIMES = ["09:00", "10:00", "11:00", "12:00", "13:00", "15:00", "17:00", "18:00", "19:00", "20:00", "21:00", "22:00", "23:00"];
+const SCHEDULE_HOURS = Array.from({ length: 16 }, (_, i) => String(i + 8).padStart(2, "0"));
+const SCHEDULE_MINUTES = Array.from({ length: 12 }, (_, i) => String(i * 5).padStart(2, "0"));
 
 export async function handleAdminScheduleTemplates(deps: Deps, chatId: number, messageId: number, user: any, groupId: string) {
   const admin = await isGroupAdmin(deps, user.id, groupId);
@@ -931,7 +931,7 @@ export async function handleAdminAddScheduleDay(deps: Deps, chatId: number, mess
   for (const pair of dayPairs) {
     buttons.push(pair.map(d => ({
       text: DAYS_FULL_RU[d],
-      callback_data: `asched_start_${d}_${groupId}`,
+      callback_data: `asched_start_hour_${d}_${groupId}`,
     })));
   }
   buttons.push([{ text: "« Назад", callback_data: `asched_list_${groupId}` }]);
@@ -941,30 +941,62 @@ export async function handleAdminAddScheduleDay(deps: Deps, chatId: number, mess
 
 export async function handleAdminAddScheduleStart(deps: Deps, chatId: number, messageId: number, day: number, groupId: string) {
   const buttons: any[][] = [];
-  for (let i = 0; i < PRESET_START_TIMES.length; i += 4) {
-    buttons.push(PRESET_START_TIMES.slice(i, i + 4).map(t => ({
-      text: t,
-      callback_data: `asched_end_${day}_${t}_${groupId}`,
+  for (let i = 0; i < SCHEDULE_HOURS.length; i += 4) {
+    buttons.push(SCHEDULE_HOURS.slice(i, i + 4).map(hour => ({
+      text: hour,
+      callback_data: `asched_start_min_${day}_${hour}_${groupId}`,
     })));
   }
   buttons.push([{ text: "« Назад", callback_data: `asched_add_${groupId}` }]);
 
-  await deps.editMessage(chatId, messageId, `⏰ ${DAYS_FULL_RU[day]} — выберите время начала:`, { inline_keyboard: buttons });
+  await deps.editMessage(chatId, messageId, `⏰ ${DAYS_FULL_RU[day]} — выберите час начала:`, { inline_keyboard: buttons });
+}
+
+export async function handleAdminAddScheduleStartMinute(deps: Deps, chatId: number, messageId: number, day: number, startHour: string, groupId: string) {
+  const buttons: any[][] = [];
+  for (let i = 0; i < SCHEDULE_MINUTES.length; i += 4) {
+    buttons.push(SCHEDULE_MINUTES.slice(i, i + 4).map(minute => ({
+      text: minute,
+      callback_data: `asched_end_hour_${day}_${startHour}:${minute}_${groupId}`,
+    })));
+  }
+  buttons.push([{ text: "« Назад", callback_data: `asched_start_hour_${day}_${groupId}` }]);
+
+  await deps.editMessage(chatId, messageId, `⏰ ${DAYS_FULL_RU[day]}, ${startHour}:__ — выберите минуты начала:`, { inline_keyboard: buttons });
 }
 
 export async function handleAdminAddScheduleEnd(deps: Deps, chatId: number, messageId: number, day: number, startTime: string, groupId: string) {
-  const validEndTimes = PRESET_END_TIMES.filter(t => t > startTime);
+  const [startHour] = startTime.split(":");
+  const startHourNum = Number(startHour);
+  const validEndHours = SCHEDULE_HOURS.filter(hour => Number(hour) >= startHourNum);
 
   const buttons: any[][] = [];
-  for (let i = 0; i < validEndTimes.length; i += 4) {
-    buttons.push(validEndTimes.slice(i, i + 4).map(t => ({
-      text: t,
-      callback_data: `asched_save_${day}_${startTime}_${t}_${groupId}`,
+  for (let i = 0; i < validEndHours.length; i += 4) {
+    buttons.push(validEndHours.slice(i, i + 4).map(endHour => ({
+      text: endHour,
+      callback_data: `asched_end_min_${day}_${startTime}_${endHour}_${groupId}`,
     })));
   }
-  buttons.push([{ text: "« Назад", callback_data: `asched_start_${day}_${groupId}` }]);
+  buttons.push([{ text: "« Назад", callback_data: `asched_start_min_${day}_${startHour}_${groupId}` }]);
 
-  await deps.editMessage(chatId, messageId, `⏰ ${DAYS_FULL_RU[day]}, начало ${startTime} — выберите время окончания:`, { inline_keyboard: buttons });
+  await deps.editMessage(chatId, messageId, `⏰ ${DAYS_FULL_RU[day]}, начало ${startTime} — выберите час окончания:`, { inline_keyboard: buttons });
+}
+
+export async function handleAdminAddScheduleEndMinute(deps: Deps, chatId: number, messageId: number, day: number, startTime: string, endHour: string, groupId: string) {
+  const [startHour, startMinute] = startTime.split(":").map(Number);
+  const endHourNum = Number(endHour);
+  const validEndMinutes = SCHEDULE_MINUTES.filter(minute => endHourNum > startHour || Number(minute) > startMinute);
+
+  const buttons: any[][] = [];
+  for (let i = 0; i < validEndMinutes.length; i += 4) {
+    buttons.push(validEndMinutes.slice(i, i + 4).map(endMinute => ({
+      text: endMinute,
+      callback_data: `asched_save_${day}_${startTime}_${endHour}:${endMinute}_${groupId}`,
+    })));
+  }
+  buttons.push([{ text: "« Назад", callback_data: `asched_end_hour_${day}_${startTime}_${groupId}` }]);
+
+  await deps.editMessage(chatId, messageId, `⏰ ${DAYS_FULL_RU[day]}, начало ${startTime}, ${endHour}:__ — выберите минуты окончания:`, { inline_keyboard: buttons });
 }
 
 export async function handleAdminSaveSchedule(deps: Deps, chatId: number, messageId: number, day: number, startTime: string, endTime: string, groupId: string) {
