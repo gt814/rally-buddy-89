@@ -1,73 +1,297 @@
-# Welcome to your Lovable project
+# PingPong Bot
 
-## Project info
+PingPong Bot помогает вести группы тренировок по настольному теннису в Telegram: участники записываются на занятия, администраторы управляют расписанием и местами.
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+## Содержание
 
-## How can I edit this code?
+- [1. Что это и как работает](#1-что-это-и-как-работает)
+- [2. Роли и права](#2-роли-и-права)
+- [3. Полная документация функций бота](#3-полная-документация-функций-бота)
+- [4. Команды бота](#4-команды-бота)
+- [5. Настройка Telegram-бота](#5-настройка-telegram-бота)
+- [6. Локальный запуск веб-панели](#6-локальный-запуск-веб-панели)
+- [7. Полезные команды разработки](#7-полезные-команды-разработки)
 
-There are several ways of editing your application.
+## 1. Что это и как работает
 
-**Use Lovable**
+Система состоит из 4 частей:
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+- Telegram-бот (`supabase/functions/telegram-bot`) — принимает webhook от Telegram, показывает меню, обрабатывает команды и кнопки.
+- Генератор сессий (`supabase/functions/generate-weekly-sessions`) — создаёт тренировки на следующую неделю из шаблонов.
+- База данных Supabase/Postgres — хранит пользователей, группы, расписания, сессии, записи, страйки.
+- Web-панель (React + Vite) — показывает группы и загрузку тренировок.
 
-Changes made via Lovable will be committed automatically to this repo.
+## 2. Роли и права
 
-**Use your preferred IDE**
+### Участник
+- Видит свои группы.
+- Видит расписание.
+- Может записаться, отменить запись, выйти из очереди.
+- Видит свой профиль (группы, будущие тренировки, страйки).
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+### Администратор группы
+- Все права участника.
+- Видит панель управления.
+- Управляет расписанием группы.
+- Видит участников и страйки.
+- Меняет параметры группы.
+- Отменяет тренировки с уведомлением участников.
+- Генерирует новую инвайт-ссылку.
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+### Суперадмин
+- Все права администратора.
+- Создаёт группы.
+- Видит все группы.
+- Удаляет группы.
 
-Follow these steps:
+Суперадмины задаются переменной `SUPER_ADMIN_IDS` (список Telegram ID через запятую).
 
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
+## 3. Полная документация функций бота
 
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
+### 3.1 Регистрация и вход
 
-# Step 3: Install the necessary dependencies.
-npm i
+- При `/start` пользователь автоматически создаётся в системе (или обновляется, если уже есть).
+- Если `/start` приходит с параметром `join_<код>`, бот пытается добавить пользователя в группу по инвайту.
 
-# Step 4: Start the development server with auto-reloading and an instant preview.
+Что проверяется при входе по ссылке:
+- Существует ли группа с таким `invite_code`.
+- Не заблокирован ли пользователь в этой группе.
+- Не состоит ли уже в группе.
+
+### 3.2 Главное меню
+
+Кнопки в меню:
+- `📋 Мои группы`
+- `📝 Расписание`
+- `👤 Мой профиль`
+- `⚙️ Управление` (только если есть админ-права)
+
+### 3.3 Группы
+
+Функции:
+- Просмотр своих групп.
+- Вступление по deep link `t.me/<bot>?start=join_<invite_code>`.
+- Для суперадмина: создание и удаление групп.
+
+Параметры группы по умолчанию:
+- `max_participants`: `8`
+- `freeze_hours`: `4`
+- `timezone`: `Europe/Moscow`
+
+### 3.4 Расписание и генерация сессий
+
+### Шаблон расписания
+
+Шаблон — это день недели + время начала + время окончания.
+Пример: вторник, `20:00–21:30`.
+
+### Как создаются тренировки (сессии)
+
+Сессии генерируются из шаблонов только на **следующую календарную неделю (Пн–Вс, UTC)**.
+
+Триггеры генерации:
+- При просмотре расписания в боте (on-demand).
+- При добавлении нового шаблона.
+- Через функцию `generate-weekly-sessions` (например, по cron).
+
+Генерация идемпотентная: используется upsert по ключу `(group_id, date, start_time)`.
+
+### 3.5 Запись на тренировку
+
+Логика:
+- Если места есть, создаётся запись со статусом `active`.
+- Если мест нет, создаётся запись со статусом `waitlist` с позицией в очереди.
+
+Показывается пользователю:
+- Дата и время тренировки.
+- Текущая загрузка (например, `6/8`).
+- Очередь (если есть).
+- Его статус: записан или в очереди.
+
+### 3.6 Очередь и автоперевод
+
+- Очередь работает по порядку (`waitlist_position` по возрастанию).
+- Если участник с `active` отменяет запись, первый из очереди переводится в `active`.
+- Переведённый участник получает сообщение в Telegram.
+
+### 3.7 Заморозка перед тренировкой (`freeze_hours`)
+
+За `freeze_hours` часов до старта:
+- Нельзя записаться.
+- Нельзя отменить активную запись.
+
+Важно:
+- Из очереди пользователь может выйти вручную.
+- Автоперевод из очереди происходит только если активная запись действительно отменилась.
+
+### 3.8 Профиль участника
+
+В разделе `👤 Мой профиль`:
+- Имя и username.
+- Количество групп.
+- Количество будущих тренировок со статусом `active`.
+- Количество активных страйков.
+- Список групп, где есть страйки.
+
+### 3.9 Админ-панель
+
+В разделе `⚙️ Управление`:
+- Для суперадмина: `➕ Создать группу`, `📋 Все группы`.
+- Для админа: список групп, которыми он управляет.
+
+Внутри управления конкретной группой:
+- `📅 Расписание группы` — будущие тренировки, загрузка, отмена тренировки.
+- `📅 Управление расписанием` — список шаблонов, добавление/удаление.
+- `👥 Участники` — список участников и статус блокировки.
+- `⚠️ Страйки` — активные страйки группы.
+- `🔗 Новая инвайт-ссылка` — пересоздание `invite_code`.
+- `✏️ Редактировать` — изменение лимитов/заморозки и подсказки для текстовых команд.
+- `🗑 Удалить` — удаление группы (только суперадмин).
+
+### 3.10 Отмена тренировки администратором
+
+При отмене тренировки:
+- Сессия получает статус `cancelled`.
+- Все записи `active` и `waitlist` переводятся в `cancelled`.
+- Всем участникам этой тренировки отправляется уведомление в Telegram.
+
+### 3.11 Страйки и баны
+
+- Страйки хранятся с датой истечения (`expires_at`).
+- Блокировка участника хранится в `group_members.is_banned`.
+- Заблокированный участник:
+  - Не может записаться.
+  - Не может повторно вступить в группу по ссылке.
+
+### 3.12 Ошибки и защитные проверки
+
+Бот обрабатывает типовые случаи:
+- Неверный формат команды.
+- Группа не найдена.
+- Недостаточно прав.
+- Запись закрыта из-за заморозки.
+- Пользователь уже записан.
+- Тренировка больше недоступна.
+
+## 4. Команды бота
+
+### 4.1 Пользовательские
+
+- `/start` — старт бота, показ меню.
+- `/start join_<код>` — вступление по инвайт-коду.
+
+### 4.2 Административные
+
+### `/newgroup Название`
+- Создаёт новую группу.
+- Только суперадмин.
+
+### `/addschedule GROUP_ID ДЕНЬ НАЧАЛО КОНЕЦ`
+- Добавляет шаблон расписания.
+- День: `0=Вс`, `1=Пн`, ..., `6=Сб`.
+- Доступно админу группы или суперадмину.
+- Можно указывать полный `GROUP_ID` или префикс.
+
+Пример:
+```bash
+/addschedule abc12345 2 20:00 21:30
+```
+
+### `/editgroup GROUP_ID ПОЛЕ ЗНАЧЕНИЕ`
+- Меняет параметры группы.
+- Поля: `name`, `max`, `freeze`, `timezone`.
+- Доступно админу группы или суперадмину.
+- Можно указывать полный `GROUP_ID` или префикс.
+
+Примеры:
+```bash
+/editgroup abc12345 max 10
+/editgroup abc12345 timezone Europe/Berlin
+/editgroup abc12345 name Вечерняя группа
+```
+
+### `/deletegroup GROUP_ID`
+- Удаляет группу и связанные данные.
+- Только суперадмин.
+- Можно указывать полный `GROUP_ID` или префикс.
+
+## 5. Настройка Telegram-бота
+
+### 5.1 Подготовка
+
+1. Создайте бота через `@BotFather` и получите токен.
+2. Убедитесь, что в `supabase/config.toml` указан правильный `project_id`.
+
+### 5.2 Деплой миграций и функций
+
+```bash
+supabase link --project-ref <PROJECT_REF>
+supabase db push --linked --password <DB_PASSWORD>
+
+supabase secrets set \
+  TELEGRAM_BOT_TOKEN="<TOKEN>" \
+  SUPER_ADMIN_IDS="123456789,987654321" \
+  --project-ref <PROJECT_REF>
+
+supabase functions deploy telegram-bot --project-ref <PROJECT_REF>
+supabase functions deploy generate-weekly-sessions --project-ref <PROJECT_REF>
+```
+
+Примечания:
+- `SUPER_ADMIN_IDS` не обязателен.
+- `SUPABASE_URL` и `SUPABASE_SERVICE_ROLE_KEY` в Edge Functions предоставляет Supabase.
+
+### 5.3 Установка webhook
+
+```bash
+curl -X POST "https://api.telegram.org/bot<TOKEN>/setWebhook" \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://<PROJECT_REF>.functions.supabase.co/telegram-bot"}'
+```
+
+### 5.4 Проверка webhook
+
+```bash
+curl "https://api.telegram.org/bot<TOKEN>/getWebhookInfo"
+```
+
+Проверьте, что в поле `url` указан endpoint `telegram-bot`.
+
+### 5.5 Минимальный smoke-test
+
+1. Отправьте `/start`.
+2. (Суперадмин) создайте группу: `/newgroup Тест`.
+3. Добавьте шаблон: `/addschedule <GROUP_ID> 2 20:00 21:30`.
+4. Зайдите по инвайт-ссылке вторым пользователем.
+5. Проверьте запись и очередь.
+
+## 6. Локальный запуск веб-панели
+
+1. Установите зависимости:
+```bash
+npm install
+```
+
+2. Создайте `.env`:
+```bash
+VITE_SUPABASE_URL=<YOUR_SUPABASE_URL>
+VITE_SUPABASE_PUBLISHABLE_KEY=<YOUR_SUPABASE_PUBLISHABLE_KEY>
+```
+
+3. Запустите проект:
+```bash
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+## 7. Полезные команды разработки
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+```bash
+npm run dev
+npm run build
+npm run test
+npm run lint
+```
 
-**Use GitHub Codespaces**
+---
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
-
-## What technologies are used for this project?
-
-This project is built with:
-
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-
-## How can I deploy this project?
-
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
-
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+Дополнительно: техническая схема потоков и сущностей описана в `docs/architecture.md`.
