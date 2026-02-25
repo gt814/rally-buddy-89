@@ -37,32 +37,37 @@ Deno.serve(async (req) => {
 
       if (!schedules || schedules.length === 0) continue;
 
-      const today = new Date();
-      const horizon = new Date(today);
-      horizon.setDate(horizon.getDate() + 14);
+      // Generate only for the next calendar week: Monday..Sunday (UTC)
+      const now = new Date();
+      const currentDay = now.getUTCDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+      const daysUntilNextMonday = currentDay === 1 ? 7 : (8 - currentDay) % 7;
+      const nextWeekMonday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+      nextWeekMonday.setUTCDate(nextWeekMonday.getUTCDate() + daysUntilNextMonday);
 
       for (const schedule of schedules) {
-        const current = new Date(today);
-        while (current <= horizon) {
-          if (current.getDay() === schedule.day_of_week) {
-            const dateStr = current.toISOString().split("T")[0];
-            const { error } = await supabase
-              .from("sessions")
-              .upsert(
-                {
-                  group_id: group.id,
-                  schedule_id: schedule.id,
-                  date: dateStr,
-                  start_time: schedule.start_time,
-                  end_time: schedule.end_time,
-                  max_participants: group.max_participants || 8,
-                },
-                { onConflict: "group_id,date,start_time" }
-              );
-            if (!error) totalCreated++;
-          }
-          current.setDate(current.getDate() + 1);
-        }
+        const dayOfWeek = Number(schedule.day_of_week);
+        if (Number.isNaN(dayOfWeek) || dayOfWeek < 0 || dayOfWeek > 6) continue;
+
+        // Convert schedule day (Sun=0..Sat=6) to offset in next week Monday..Sunday.
+        const dayOffset = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+        const sessionDate = new Date(nextWeekMonday);
+        sessionDate.setUTCDate(nextWeekMonday.getUTCDate() + dayOffset);
+        const dateStr = sessionDate.toISOString().split("T")[0];
+
+        const { error } = await supabase
+          .from("sessions")
+          .upsert(
+            {
+              group_id: group.id,
+              schedule_id: schedule.id,
+              date: dateStr,
+              start_time: schedule.start_time,
+              end_time: schedule.end_time,
+              max_participants: group.max_participants || 8,
+            },
+            { onConflict: "group_id,date,start_time" }
+          );
+        if (!error) totalCreated++;
       }
     }
 
