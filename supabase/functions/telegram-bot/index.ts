@@ -1000,11 +1000,18 @@ async function handleUpdate(update: any) {
         ],
       });
     } else if (data.startsWith("asched_confirm_del_")) {
-      // asched_confirm_del_<scheduleId>_<groupId>
-      const rest = data.replace("asched_confirm_del_", "");
-      const parts = rest.split("_");
-      const scheduleId = parts[0];
-      const groupId = parts.slice(1).join("_");
+      // asched_confirm_del_<scheduleId>
+      const scheduleId = data.replace("asched_confirm_del_", "");
+      const { data: schedule } = await supabase
+        .from("schedules")
+        .select("id, group_id")
+        .eq("id", scheduleId)
+        .single();
+      if (!schedule) {
+        await editMessage(chatId, messageId, "❌ Расписание не найдено.");
+        return;
+      }
+      const groupId = schedule.group_id;
       // Check admin
       const admin = await isGroupAdmin(user.id, groupId);
       if (!admin && !user.is_super_admin) return;
@@ -1023,25 +1030,21 @@ async function handleUpdate(update: any) {
         ],
       });
     } else if (data.startsWith("asched_del_")) {
-      // asched_del_<scheduleId>_<groupId>
-      const rest = data.replace("asched_del_", "");
-      const parts = rest.split("_");
-      const scheduleId = parts[0];
-      const groupId = parts.slice(1).join("_");
+      // asched_del_<scheduleId>
+      const scheduleId = data.replace("asched_del_", "");
       const { data: schedule } = await supabase.from("schedules").select("*").eq("id", scheduleId).single();
       const DAYS_FULL = ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"];
       if (!schedule) {
-        await editMessage(chatId, messageId, "❌ Расписание не найдено.", {
-          inline_keyboard: [[{ text: "« Назад", callback_data: `asched_list_${groupId}` }]],
-        });
+        await editMessage(chatId, messageId, "❌ Расписание не найдено.");
         return;
       }
+      const groupId = schedule.group_id;
       await editMessage(chatId, messageId,
         `⚠️ Удалить расписание?\n\n${DAYS_FULL[schedule.day_of_week]} ${formatTime(schedule.start_time)}–${formatTime(schedule.end_time)}\n\nБудущие сессии по этому шаблону также будут удалены.`,
         {
           inline_keyboard: [
             [
-              { text: "✅ Да, удалить", callback_data: `asched_confirm_del_${scheduleId}_${groupId}` },
+              { text: "✅ Да, удалить", callback_data: `asched_confirm_del_${scheduleId}` },
               { text: "❌ Нет", callback_data: `asched_list_${groupId}` },
             ],
           ],
@@ -1121,7 +1124,7 @@ async function handleUpdate(update: any) {
       } else {
         for (const s of schedules) {
           text += `• ${DAYS_FULL[s.day_of_week]} ${formatTime(s.start_time)}–${formatTime(s.end_time)}\n`;
-          buttons.push([{ text: `🗑 ${DAYS_RU[s.day_of_week]} ${formatTime(s.start_time)}–${formatTime(s.end_time)}`, callback_data: `asched_del_${s.id}_${groupId}` }]);
+          buttons.push([{ text: `🗑 ${DAYS_RU[s.day_of_week]} ${formatTime(s.start_time)}–${formatTime(s.end_time)}`, callback_data: `asched_del_${s.id}` }]);
         }
       }
       text += "\nНажмите ➕ чтобы добавить расписание на новый день.";

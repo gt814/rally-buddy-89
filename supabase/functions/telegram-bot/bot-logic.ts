@@ -798,7 +798,7 @@ export async function handleAdminScheduleTemplates(deps: Deps, chatId: number, m
     for (const s of schedules) {
       text += `• ${DAYS_FULL_RU[s.day_of_week]} ${formatTime(s.start_time)}–${formatTime(s.end_time)}\n`;
       buttons.push([
-        { text: `🗑 ${DAYS_RU[s.day_of_week]} ${formatTime(s.start_time)}–${formatTime(s.end_time)}`, callback_data: `asched_del_${s.id}_${groupId}` },
+        { text: `🗑 ${DAYS_RU[s.day_of_week]} ${formatTime(s.start_time)}–${formatTime(s.end_time)}`, callback_data: `asched_del_${s.id}` },
       ]);
     }
   }
@@ -877,7 +877,7 @@ export async function handleAdminSaveSchedule(deps: Deps, chatId: number, messag
   );
 }
 
-export async function handleAdminDeleteScheduleConfirm(deps: Deps, chatId: number, messageId: number, scheduleId: string, groupId: string) {
+export async function handleAdminDeleteScheduleConfirm(deps: Deps, chatId: number, messageId: number, scheduleId: string, groupId?: string) {
   const { data: schedule } = await deps.supabase
     .from("schedules")
     .select("*")
@@ -885,11 +885,16 @@ export async function handleAdminDeleteScheduleConfirm(deps: Deps, chatId: numbe
     .single();
 
   if (!schedule) {
+    const backButton = groupId
+      ? [{ text: "« Назад", callback_data: `asched_list_${groupId}` }]
+      : [{ text: "« Назад", callback_data: "admin" }];
     await deps.editMessage(chatId, messageId, "❌ Расписание не найдено.", {
-      inline_keyboard: [[{ text: "« Назад", callback_data: `asched_list_${groupId}` }]],
+      inline_keyboard: [backButton],
     });
     return;
   }
+
+  const resolvedGroupId = schedule.group_id;
 
   await deps.editMessage(
     chatId,
@@ -898,15 +903,26 @@ export async function handleAdminDeleteScheduleConfirm(deps: Deps, chatId: numbe
     {
       inline_keyboard: [
         [
-          { text: "✅ Да, удалить", callback_data: `asched_confirm_del_${scheduleId}_${groupId}` },
-          { text: "❌ Нет", callback_data: `asched_list_${groupId}` },
+          { text: "✅ Да, удалить", callback_data: `asched_confirm_del_${scheduleId}` },
+          { text: "❌ Нет", callback_data: `asched_list_${resolvedGroupId}` },
         ],
       ],
     }
   );
 }
 
-export async function handleAdminConfirmDeleteSchedule(deps: Deps, chatId: number, messageId: number, scheduleId: string, groupId: string) {
+export async function handleAdminConfirmDeleteSchedule(deps: Deps, chatId: number, messageId: number, scheduleId: string, groupId?: string) {
+  const { data: schedule } = await deps.supabase
+    .from("schedules")
+    .select("group_id")
+    .eq("id", scheduleId)
+    .single();
+  const resolvedGroupId = schedule?.group_id || groupId;
+  if (!resolvedGroupId) {
+    await deps.editMessage(chatId, messageId, "❌ Расписание не найдено.");
+    return;
+  }
+
   const today = new Date().toISOString().split("T")[0];
   const { data: futureSessions } = await deps.supabase
     .from("sessions")
@@ -932,8 +948,8 @@ export async function handleAdminConfirmDeleteSchedule(deps: Deps, chatId: numbe
 
   await deps.editMessage(chatId, messageId, "✅ Расписание и связанные будущие сессии удалены.", {
     inline_keyboard: [
-      [{ text: "📅 К расписанию", callback_data: `asched_list_${groupId}` }],
-      [{ text: "« К группе", callback_data: `admin_group_${groupId}` }],
+      [{ text: "📅 К расписанию", callback_data: `asched_list_${resolvedGroupId}` }],
+      [{ text: "« К группе", callback_data: `admin_group_${resolvedGroupId}` }],
     ],
   });
 }
