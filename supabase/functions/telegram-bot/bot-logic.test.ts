@@ -26,6 +26,7 @@ import {
   handleAdminConfirmCancelSession,
   handleAdminEditMenu,
   handleAdminEditMax,
+  handleAdminEditMaxCustom,
   handleAdminEditFreeze,
   handleAdminSetField,
   handleAdminEditText,
@@ -1070,6 +1071,17 @@ Deno.test("handleAdminEditMax — показывает варианты с те�
   assertStringIncludes(editedMessages[0].text, "сейчас: 8");
   const btns = editedMessages[0].reply_markup.inline_keyboard.flat();
   assertEquals(btns.some((b: any) => b.text === "✅ 8"), true);
+  assertEquals(btns.some((b: any) => b.callback_data.startsWith("aedit_max_custom_")), true);
+});
+
+Deno.test("handleAdminEditMaxCustom — показывает инструкцию для произвольного max", async () => {
+  const { deps, editedMessages } = createMockDeps({});
+
+  await handleAdminEditMaxCustom(deps, 123, 1, "g1-full-uuid");
+
+  assertStringIncludes(editedMessages[0].text, "/editgroup");
+  assertStringIncludes(editedMessages[0].text, "max 9");
+  assertStringIncludes(editedMessages[0].text, "положительные целые");
 });
 
 // --- 19. Inline-кнопки: выбор заморозки ---

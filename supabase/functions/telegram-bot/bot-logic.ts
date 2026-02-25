@@ -738,7 +738,7 @@ export async function handleAdminEditMax(deps: Deps, chatId: number, messageId: 
   const { data: group } = await deps.supabase.from("groups").select("max_participants").eq("id", groupId).single();
   const current = group?.max_participants || 8;
 
-  const options = [4, 6, 8, 10, 12, 16, 20];
+  const options = [4, 6, 8, 10, 12];
   const buttons = options.map((v) => ({
     text: v === current ? `✅ ${v}` : `${v}`,
     callback_data: `aset_max_${v}_${groupId}`,
@@ -749,11 +749,27 @@ export async function handleAdminEditMax(deps: Deps, chatId: number, messageId: 
   for (let i = 0; i < buttons.length; i += 4) {
     rows.push(buttons.slice(i, i + 4));
   }
+  rows.push([{ text: "⌨️ Ввести вручную", callback_data: `aedit_max_custom_${groupId}` }]);
   rows.push([{ text: "« Назад", callback_data: `aedit_${groupId}` }]);
 
   await deps.editMessage(chatId, messageId, `👥 Выберите макс. количество участников (сейчас: ${current}):`, {
     inline_keyboard: rows,
   });
+}
+
+export async function handleAdminEditMaxCustom(deps: Deps, chatId: number, messageId: number, groupId: string) {
+  const shortId = groupId.substring(0, 8);
+
+  await deps.editMessage(
+    chatId,
+    messageId,
+    `Введите любое число командой:\n\n` +
+    `👥 <code>/editgroup ${shortId} max 9</code>\n\n` +
+    `Допустимы любые положительные целые числа.`,
+    {
+      inline_keyboard: [[{ text: "« Назад", callback_data: `aedit_max_${groupId}` }]],
+    }
+  );
 }
 
 export async function handleAdminEditFreeze(deps: Deps, chatId: number, messageId: number, groupId: string) {
