@@ -14,6 +14,8 @@ import {
   generateSessions,
   handleStart,
   handleMyGroups,
+  handleLeaveGroup,
+  handleConfirmLeaveGroup,
   handleBook,
   handleConfirmCancel,
   handleCancelWaitlist,
@@ -339,6 +341,34 @@ Deno.test("handleMyGroups — отображает список групп", asy
 
   assertStringIncludes(editedMessages[0].text, "Ваши группы");
   assertEquals(editedMessages[0].reply_markup.inline_keyboard.length, 3); // 2 groups + back
+  assertEquals(editedMessages[0].reply_markup.inline_keyboard[0][0].callback_data, "leave_group_g1");
+});
+
+Deno.test("handleLeaveGroup — показывает подтверждение выхода", async () => {
+  const { deps, editedMessages } = createMockDeps({
+    group_members: [{ data: { group_id: "g1", groups: { name: "Первая" } } }],
+  });
+
+  const user = { id: "user-1" };
+  await handleLeaveGroup(deps, 123, 1, user, "g1");
+
+  assertStringIncludes(editedMessages[0].text, "Выйти из группы");
+  assertEquals(editedMessages[0].reply_markup.inline_keyboard[0][0].callback_data, "confirm_leave_group_g1");
+});
+
+Deno.test("handleConfirmLeaveGroup — выходит из группы и отменяет записи", async () => {
+  const { deps, editedMessages } = createMockDeps({
+    group_members: [{ data: { group_id: "g1", groups: { name: "Первая" } } }],
+    sessions: [{ data: [{ id: "s1" }, { id: "s2" }] }],
+    bookings: [{ data: [{ id: "b1" }, { id: "b2" }] }],
+    group_admins: [{ data: null }],
+  });
+
+  const user = { id: "user-1" };
+  await handleConfirmLeaveGroup(deps, 123, 1, user, "g1");
+
+  assertStringIncludes(editedMessages[0].text, "вышли из группы");
+  assertStringIncludes(editedMessages[0].text, "Отменено записей на тренировки: 2");
 });
 
 // --- 8. Бронирование тренировки ---

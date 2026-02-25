@@ -218,13 +218,106 @@ export async function handleMyGroups(deps: Deps, chatId: number, messageId: numb
   }
 
   const buttons = groups.map((m: any) => [
-    { text: `🏓 ${m.groups.name}`, callback_data: `group_${m.group_id}` },
+    { text: `🚪 ${m.groups.name}`, callback_data: `leave_group_${m.group_id}` },
   ]);
   buttons.push([{ text: "« Назад", callback_data: "main_menu" }]);
 
-  await deps.editMessage(chatId, messageId, "📋 <b>Ваши группы:</b>", {
+  await deps.editMessage(chatId, messageId, "📋 <b>Ваши группы:</b>\n\nВыберите группу, чтобы выйти из неё.", {
     inline_keyboard: buttons,
   });
+}
+
+export async function handleLeaveGroup(deps: Deps, chatId: number, messageId: number, user: any, groupId: string) {
+  const { data: membership } = await deps.supabase
+    .from("group_members")
+    .select("group_id, groups(name)")
+    .eq("group_id", groupId)
+    .eq("user_id", user.id)
+    .eq("is_banned", false)
+    .maybeSingle();
+
+  if (!membership) {
+    await deps.editMessage(chatId, messageId, "Вы уже не состоите в этой группе.", {
+      inline_keyboard: [[{ text: "« К моим группам", callback_data: "my_groups" }]],
+    });
+    return;
+  }
+
+  const groupName = (membership as any).groups?.name || "группа";
+  await deps.editMessage(
+    chatId,
+    messageId,
+    `⚠️ Выйти из группы «${groupName}»?\n\nВсе ваши записи на будущие тренировки в этой группе будут отменены.`,
+    {
+      inline_keyboard: [
+        [
+          { text: "✅ Да, выйти", callback_data: `confirm_leave_group_${groupId}` },
+          { text: "❌ Нет", callback_data: "my_groups" },
+        ],
+      ],
+    }
+  );
+}
+
+export async function handleConfirmLeaveGroup(deps: Deps, chatId: number, messageId: number, user: any, groupId: string) {
+  const { data: membership } = await deps.supabase
+    .from("group_members")
+    .select("group_id, groups(name)")
+    .eq("group_id", groupId)
+    .eq("user_id", user.id)
+    .eq("is_banned", false)
+    .maybeSingle();
+
+  if (!membership) {
+    await deps.editMessage(chatId, messageId, "Вы уже не состоите в этой группе.", {
+      inline_keyboard: [[{ text: "« К моим группам", callback_data: "my_groups" }]],
+    });
+    return;
+  }
+
+  const today = new Date().toISOString().split("T")[0];
+  const { data: futureSessions } = await deps.supabase
+    .from("sessions")
+    .select("id")
+    .eq("group_id", groupId)
+    .gte("date", today);
+  const futureSessionIds = (futureSessions || []).map((s: any) => s.id);
+
+  let cancelledCount = 0;
+  if (futureSessionIds.length > 0) {
+    const { data: myFutureBookings } = await deps.supabase
+      .from("bookings")
+      .select("id")
+      .eq("user_id", user.id)
+      .in("session_id", futureSessionIds)
+      .in("status", ["active", "waitlist"]);
+
+    cancelledCount = myFutureBookings?.length || 0;
+    if (cancelledCount > 0) {
+      await deps.supabase
+        .from("bookings")
+        .update({ status: "cancelled", cancelled_at: new Date().toISOString() })
+        .eq("user_id", user.id)
+        .in("session_id", futureSessionIds)
+        .in("status", ["active", "waitlist"]);
+    }
+  }
+
+  await deps.supabase.from("group_admins").delete().eq("group_id", groupId).eq("user_id", user.id);
+  await deps.supabase.from("group_members").delete().eq("group_id", groupId).eq("user_id", user.id);
+
+  const groupName = (membership as any).groups?.name || "группа";
+  await deps.editMessage(
+    chatId,
+    messageId,
+    `✅ Вы вышли из группы «${groupName}».\nОтменено записей на тренировки: ${cancelledCount}.`,
+    {
+      inline_keyboard: [
+        [{ text: "📋 Мои группы", callback_data: "my_groups" }],
+        [{ text: "« В меню", callback_data: "main_menu" }],
+      ],
+    }
+  );
 }
 
 export async function handleBook(deps: Deps, chatId: number, messageId: number, user: any, sessionId: string) {
