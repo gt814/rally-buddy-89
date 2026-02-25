@@ -58,9 +58,8 @@ jobs:
 
       - name: Deploy database migrations
         run: |
-          supabase db push \
-            --project-ref "${{ steps.project.outputs.ref }}" \
-            --password "${SUPABASE_DB_PASSWORD}"
+          supabase link --project-ref "${{ steps.project.outputs.ref }}"
+          supabase db push --linked --password "${SUPABASE_DB_PASSWORD}"
 
   deploy-functions:
     needs: deploy-migrations
