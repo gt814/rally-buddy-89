@@ -737,21 +737,36 @@ async function handleProfile(chatId: number, messageId: number, user: any) {
 // ===== Admin handlers =====
 async function handleAdmin(chatId: number, messageId: number, user: any) {
   const adminGroups = await getUserAdminGroups(user.id);
-  
   const buttons: any[][] = [];
+  let managedGroups: Array<{ id: string; name: string }> = [];
 
   if (user.is_super_admin) {
     buttons.push([{ text: "➕ Создать группу", callback_data: "sa_create_group" }]);
-    buttons.push([{ text: "📋 Все группы", callback_data: "sa_all_groups" }]);
+    const { data: allGroups } = await supabase
+      .from("groups")
+      .select("id, name")
+      .order("created_at");
+    managedGroups = (allGroups || []) as Array<{ id: string; name: string }>;
+  } else {
+    managedGroups = (adminGroups || [])
+      .map((ag: any) => ({
+        id: ag.group_id,
+        name: ag.groups?.name,
+      }))
+      .filter((g) => g.id && g.name);
   }
 
-  for (const ag of adminGroups) {
-    buttons.push([{ text: `⚙️ ${(ag as any).groups?.name}`, callback_data: `admin_group_${ag.group_id}` }]);
+  for (const g of managedGroups) {
+    buttons.push([{ text: `⚙️ ${g.name}`, callback_data: `admin_group_${g.id}` }]);
   }
 
   buttons.push([{ text: "« Назад", callback_data: "main_menu" }]);
 
-  await editMessage(chatId, messageId, "⚙️ <b>Панель управления</b>", {
+  const text = managedGroups.length > 0
+    ? "⚙️ <b>Панель управления</b>\n\nВыберите группу для управления:"
+    : "⚙️ <b>Панель управления</b>\n\nУ вас нет доступных групп для управления.";
+
+  await editMessage(chatId, messageId, text, {
     inline_keyboard: buttons,
   });
 }
@@ -971,6 +986,13 @@ async function handleUpdate(update: any) {
       await handleCancel(chatId, messageId, user, sessionId);
     } else if (data.startsWith("admin_group_")) {
       const groupId = data.replace("admin_group_", "");
+      const canManageGroup = user.is_super_admin || (await isGroupAdmin(user.id, groupId));
+      if (!canManageGroup) {
+        await editMessage(chatId, messageId, "❌ У вас нет прав для управления этой группой.", {
+          inline_keyboard: [[{ text: "« Назад", callback_data: "admin" }]],
+        });
+        return;
+      }
       await handleAdminGroup(chatId, messageId, user, groupId);
     } else if (data.startsWith("admin_sched_fromcancel_")) {
       const sessionId = data.replace("admin_sched_fromcancel_", "");
@@ -988,6 +1010,12 @@ async function handleUpdate(update: any) {
     } else if (data === "sa_create_group") {
       await sendMessage(chatId, "Отправьте название новой группы текстовым сообщением.\n\nФормат: <code>/newgroup Название группы</code>");
     } else if (data === "sa_all_groups") {
+      if (!user.is_super_admin) {
+        await editMessage(chatId, messageId, "❌ Эта функция доступна только суперадмину.", {
+          inline_keyboard: [[{ text: "« Назад", callback_data: "admin" }]],
+        });
+        return;
+      }
       const { data: groups } = await supabase.from("groups").select("*").order("created_at");
       if (!groups || groups.length === 0) {
         await editMessage(chatId, messageId, "Групп пока нет.", {
