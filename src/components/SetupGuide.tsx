@@ -24,7 +24,7 @@ export function SetupGuide() {
               Отправьте запрос к Telegram API для установки webhook:
             </p>
             <code className="block mt-2 p-3 bg-muted rounded-md text-xs font-mono break-all text-foreground">
-              https://api.telegram.org/bot&lt;TOKEN&gt;/setWebhook?url=https://nawlvriducoqzwqxqptz.supabase.co/functions/v1/telegram-bot
+              https://api.telegram.org/bot&lt;TOKEN&gt;/setWebhook?url=https://gbptjgtbadzrbnbygykd.supabase.co/functions/v1/telegram-bot
             </code>
           </CardContent>
         </Card>
