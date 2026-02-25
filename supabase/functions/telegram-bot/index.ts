@@ -287,7 +287,7 @@ async function handleSchedule(chatId: number, messageId: number, user: any) {
   }
 
   if (groups.length === 1) {
-    await showGroupSchedule(chatId, messageId, user, groups[0].group_id);
+    await showGroupSchedule(chatId, messageId, user, groups[0].group_id, "main_menu");
     return;
   }
 
@@ -301,7 +301,7 @@ async function handleSchedule(chatId: number, messageId: number, user: any) {
   });
 }
 
-async function showGroupSchedule(chatId: number, messageId: number, user: any, groupId: string) {
+async function showGroupSchedule(chatId: number, messageId: number, user: any, groupId: string, backCallbackData = "schedule") {
   // Generate sessions on demand
   await generateSessions(groupId);
 
@@ -324,7 +324,7 @@ async function showGroupSchedule(chatId: number, messageId: number, user: any, g
 
   if (!sessions || sessions.length === 0) {
     await editMessage(chatId, messageId, `📅 <b>${group?.name}</b>\n\nНет запланированных тренировок.`, {
-      inline_keyboard: [[{ text: "« Назад", callback_data: "schedule" }]],
+      inline_keyboard: [[{ text: "« Назад", callback_data: backCallbackData }]],
     });
     return;
   }
@@ -387,7 +387,7 @@ async function showGroupSchedule(chatId: number, messageId: number, user: any, g
     }
   }
 
-  buttons.push([{ text: "« Назад", callback_data: "schedule" }]);
+  buttons.push([{ text: "« Назад", callback_data: backCallbackData }]);
 
   await editMessage(chatId, messageId, text, { inline_keyboard: buttons });
 }
