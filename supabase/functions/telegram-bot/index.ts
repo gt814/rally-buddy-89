@@ -154,6 +154,11 @@ function formatTime(time: string): string {
   return time.substring(0, 5);
 }
 
+function isSessionCompletedNow(date: string, endTime: string): boolean {
+  const sessionEnd = new Date(`${date}T${endTime}`);
+  return sessionEnd.getTime() <= Date.now();
+}
+
 // ===== Generate sessions for a group =====
 async function generateSessions(groupId: string) {
   const { data: schedules } = await supabase
@@ -248,6 +253,7 @@ async function handleStart(chatId: number, user: any, startParam?: string) {
   const buttons: any[][] = [
     [{ text: "📋 Группы", callback_data: "my_groups" }],
     [{ text: "📝 Расписание", callback_data: "schedule" }],
+    [{ text: "📚 История", callback_data: "history" }],
     [{ text: "👤 Профиль", callback_data: "profile" }],
   ];
 
@@ -548,6 +554,7 @@ async function handleBook(chatId: number, messageId: number, user: any, sessionI
       session_id: sessionId,
       user_id: user.id,
       status: "active",
+      attended: true,
     });
     if (error) {
       if (error.code === "23505") {
@@ -582,6 +589,7 @@ async function handleBook(chatId: number, messageId: number, user: any, sessionI
       user_id: user.id,
       status: "waitlist",
       waitlist_position: position,
+      attended: null,
     });
 
     if (error) {
@@ -652,7 +660,7 @@ async function handleConfirmCancel(chatId: number, messageId: number, user: any,
   if (nextInLine) {
     await supabase
       .from("bookings")
-      .update({ status: "active", waitlist_position: null })
+      .update({ status: "active", waitlist_position: null, attended: true })
       .eq("id", nextInLine.id);
 
     // Notify promoted user
@@ -685,6 +693,55 @@ async function handleCancelWaitlist(chatId: number, messageId: number, user: any
 
   await editMessage(chatId, messageId, "✅ Вы покинули лист ожидания.", {
     inline_keyboard: [[{ text: "« К расписанию", callback_data: `sched_${session?.group_id}` }]],
+  });
+}
+
+async function handleHistory(chatId: number, messageId: number, user: any) {
+  const { data: myBookings } = await supabase
+    .from("bookings")
+    .select("attended, sessions(id, group_id, date, start_time, end_time, status, groups(name))")
+    .eq("user_id", user.id)
+    .eq("status", "active")
+    .order("created_at", { ascending: false })
+    .limit(100);
+
+  const history = (myBookings || [])
+    .map((b: any) => ({
+      attended: b.attended,
+      session: b.sessions,
+    }))
+    .filter((row: any) => row.session && row.session.status !== "cancelled")
+    .filter((row: any) => isSessionCompletedNow(row.session.date, row.session.end_time))
+    .sort((a: any, b: any) => {
+      const ad = new Date(`${a.session.date}T${a.session.start_time}`).getTime();
+      const bd = new Date(`${b.session.date}T${b.session.start_time}`).getTime();
+      return bd - ad;
+    });
+
+  if (history.length === 0) {
+    await editMessage(chatId, messageId, "📚 История пока пустая.", {
+      inline_keyboard: [[{ text: "« Назад", callback_data: "main_menu" }]],
+    });
+    return;
+  }
+
+  const noShowCount = history.filter((h: any) => h.attended === false).length;
+  let text = "📚 <b>Ваша история тренировок</b>\n\n";
+  text += `Всего: ${history.length}\n`;
+  text += `Пропущено: ${noShowCount}\n\n`;
+
+  for (const item of history.slice(0, 25)) {
+    const status = item.attended === false ? "❌ Не пришли" : "✅ Были";
+    text += `• ${formatDate(item.session.date)}, ${formatTime(item.session.start_time)}–${formatTime(item.session.end_time)}\n`;
+    text += `  ${item.session.groups?.name || "Группа"} · ${status}\n`;
+  }
+
+  if (history.length > 25) {
+    text += `\n… и еще ${history.length - 25}`;
+  }
+
+  await editMessage(chatId, messageId, text, {
+    inline_keyboard: [[{ text: "« Назад", callback_data: "main_menu" }]],
   });
 }
 
@@ -776,6 +833,8 @@ async function handleAdminGroup(chatId: number, messageId: number, user: any, gr
 
   const buttons = [
     [{ text: "📅 Ближайшие тренировки", callback_data: `admin_sched_${groupId}` }],
+    [{ text: "📚 История тренировок", callback_data: `ahist_${groupId}` }],
+    [{ text: "📊 Отчет за месяц", callback_data: `arep_${groupId}` }],
     [{ text: "🗓 Шаблоны расписания", callback_data: `asched_list_${groupId}` }],
     [{ text: "👥 Участники", callback_data: `admin_members_${groupId}` }],
     [{ text: "🔗 Новая инвайт-ссылка", callback_data: `admin_newinvite_${groupId}` }],
@@ -895,6 +954,203 @@ async function handleAdminConfirmCancelSession(chatId: number, messageId: number
   });
 }
 
+async function handleAdminHistory(chatId: number, messageId: number, user: any, groupId: string) {
+  const canManageGroup = user.is_super_admin || (await isGroupAdmin(user.id, groupId));
+  if (!canManageGroup) {
+    await editMessage(chatId, messageId, "❌ У вас нет прав для этой группы.", {
+      inline_keyboard: [[{ text: "« Назад", callback_data: "admin" }]],
+    });
+    return;
+  }
+
+  const { data: sessions } = await supabase
+    .from("sessions")
+    .select("*")
+    .eq("group_id", groupId)
+    .neq("status", "cancelled")
+    .order("date", { ascending: false })
+    .order("start_time", { ascending: false })
+    .limit(60);
+
+  const pastSessions = (sessions || []).filter((s: any) => isSessionCompletedNow(s.date, s.end_time));
+  if (pastSessions.length === 0) {
+    await editMessage(chatId, messageId, "📚 Прошедших тренировок пока нет.", {
+      inline_keyboard: [[{ text: "« Назад", callback_data: `admin_group_${groupId}` }]],
+    });
+    return;
+  }
+
+  let text = "📚 <b>История тренировок</b>\n\n";
+  const buttons: any[][] = [];
+
+  for (const s of pastSessions.slice(0, 20)) {
+    const dateStr = formatDate(s.date);
+    text += `• ${dateStr}, ${formatTime(s.start_time)}–${formatTime(s.end_time)}\n`;
+    buttons.push([
+      { text: `👥 ${dateStr} ${formatTime(s.start_time)}`, callback_data: `asess_${s.id}` },
+    ]);
+  }
+
+  if (pastSessions.length > 20) {
+    text += `\nПоказаны последние 20 из ${pastSessions.length}.`;
+  }
+
+  buttons.push([{ text: "« Назад", callback_data: `admin_group_${groupId}` }]);
+  await editMessage(chatId, messageId, text, { inline_keyboard: buttons });
+}
+
+async function handleAdminSessionAttendance(chatId: number, messageId: number, user: any, sessionId: string) {
+  const { data: session } = await supabase
+    .from("sessions")
+    .select("id, group_id, date, start_time, end_time, status")
+    .eq("id", sessionId)
+    .single();
+  if (!session) return;
+
+  const canManageGroup = user.is_super_admin || (await isGroupAdmin(user.id, session.group_id));
+  if (!canManageGroup) {
+    await editMessage(chatId, messageId, "❌ У вас нет прав для этой группы.", {
+      inline_keyboard: [[{ text: "« Назад", callback_data: "admin" }]],
+    });
+    return;
+  }
+
+  if (!isSessionCompletedNow(session.date, session.end_time)) {
+    await editMessage(chatId, messageId, "Отмечать неявки можно только после окончания тренировки.", {
+      inline_keyboard: [[{ text: "« Назад", callback_data: `admin_group_${session.group_id}` }]],
+    });
+    return;
+  }
+
+  const { data: bookings } = await supabase
+    .from("bookings")
+    .select("id, attended, user_id, bot_users(first_name, username, telegram_id)")
+    .eq("session_id", sessionId)
+    .eq("status", "active")
+    .order("created_at", { ascending: true });
+
+  let text = `👥 <b>Записавшиеся</b>\n\n`;
+  text += `📅 ${formatDate(session.date)}, ${formatTime(session.start_time)}–${formatTime(session.end_time)}\n\n`;
+
+  const buttons: any[][] = [];
+  let noShows = 0;
+  for (const b of bookings || []) {
+    const u = (b as any).bot_users;
+    const name = u?.first_name || (u?.username ? `@${u.username}` : `ID:${u?.telegram_id || "?"}`);
+    const missed = b.attended === false;
+    if (missed) noShows++;
+    text += `${missed ? "❌" : "✅"} ${name}\n`;
+    buttons.push([
+      missed
+        ? { text: `↩️ Убрать неявку: ${name}`, callback_data: `aok_${b.id}` }
+        : { text: `❌ Не пришел: ${name}`, callback_data: `anosh_${b.id}` },
+    ]);
+  }
+
+  text += `\nПропустили: ${noShows}`;
+  buttons.push([{ text: "« К истории", callback_data: `ahist_${session.group_id}` }]);
+
+  await editMessage(chatId, messageId, text, { inline_keyboard: buttons });
+}
+
+async function handleAdminMarkNoShow(chatId: number, messageId: number, user: any, bookingId: string, attended: boolean) {
+  const { data: booking } = await supabase
+    .from("bookings")
+    .select("id, session_id, sessions(group_id, date, end_time)")
+    .eq("id", bookingId)
+    .eq("status", "active")
+    .single();
+  if (!booking) return;
+
+  const groupId = (booking as any).sessions?.group_id;
+  if (!groupId) return;
+  const canManageGroup = user.is_super_admin || (await isGroupAdmin(user.id, groupId));
+  if (!canManageGroup) {
+    await editMessage(chatId, messageId, "❌ У вас нет прав для этой группы.");
+    return;
+  }
+
+  if (!isSessionCompletedNow((booking as any).sessions.date, (booking as any).sessions.end_time)) {
+    await editMessage(chatId, messageId, "Эту отметку можно менять только после окончания тренировки.");
+    return;
+  }
+
+  await supabase
+    .from("bookings")
+    .update({ attended })
+    .eq("id", bookingId);
+
+  await handleAdminSessionAttendance(chatId, messageId, user, booking.session_id);
+}
+
+async function handleAdminMonthlyReport(chatId: number, messageId: number, user: any, groupId: string) {
+  const canManageGroup = user.is_super_admin || (await isGroupAdmin(user.id, groupId));
+  if (!canManageGroup) {
+    await editMessage(chatId, messageId, "❌ У вас нет прав для этой группы.", {
+      inline_keyboard: [[{ text: "« Назад", callback_data: "admin" }]],
+    });
+    return;
+  }
+
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  const monthStartStr = monthStart.toISOString().split("T")[0];
+  const nextMonthStartStr = nextMonthStart.toISOString().split("T")[0];
+
+  const { data: sessions } = await supabase
+    .from("sessions")
+    .select("id, date, start_time, end_time")
+    .eq("group_id", groupId)
+    .neq("status", "cancelled")
+    .gte("date", monthStartStr)
+    .lt("date", nextMonthStartStr);
+
+  const completedSessions = (sessions || []).filter((s: any) => isSessionCompletedNow(s.date, s.end_time));
+  const sessionIds = completedSessions.map((s: any) => s.id);
+
+  if (sessionIds.length === 0) {
+    await editMessage(chatId, messageId, "📊 За текущий месяц пока нет завершенных тренировок.", {
+      inline_keyboard: [[{ text: "« Назад", callback_data: `admin_group_${groupId}` }]],
+    });
+    return;
+  }
+
+  const { data: bookings } = await supabase
+    .from("bookings")
+    .select("attended, user_id, bot_users(first_name, username, telegram_id)")
+    .in("session_id", sessionIds)
+    .eq("status", "active");
+
+  const stats: Record<string, { name: string; total: number; missed: number }> = {};
+  for (const b of bookings || []) {
+    const u = (b as any).bot_users;
+    const key = b.user_id;
+    const name = u?.first_name || (u?.username ? `@${u.username}` : `ID:${u?.telegram_id || "?"}`);
+    if (!stats[key]) stats[key] = { name, total: 0, missed: 0 };
+    stats[key].total += 1;
+    if (b.attended === false) stats[key].missed += 1;
+  }
+
+  const rows = Object.values(stats)
+    .sort((a, b) => b.missed - a.missed || b.total - a.total);
+
+  const totalMissed = rows.reduce((acc, row) => acc + row.missed, 0);
+  const monthLabel = now.toLocaleString("ru-RU", { month: "long", year: "numeric" });
+  let text = `📊 <b>Отчет за ${monthLabel}</b>\n\n`;
+  text += `Тренировок завершено: ${sessionIds.length}\n`;
+  text += `Всего неявок: ${totalMissed}\n\n`;
+  text += "<b>Неявки по участникам:</b>\n";
+
+  for (const row of rows.slice(0, 30)) {
+    text += `• ${row.name}: ${row.missed}/${row.total}\n`;
+  }
+
+  await editMessage(chatId, messageId, text, {
+    inline_keyboard: [[{ text: "« Назад", callback_data: `admin_group_${groupId}` }]],
+  });
+}
+
 // ===== Main handler =====
 async function handleUpdate(update: any) {
   // Handle /start command
@@ -923,6 +1179,7 @@ async function handleUpdate(update: any) {
       const buttons: any[][] = [
         [{ text: "📋 Группы", callback_data: "my_groups" }],
         [{ text: "📝 Расписание", callback_data: "schedule" }],
+        [{ text: "📚 История", callback_data: "history" }],
         [{ text: "👤 Профиль", callback_data: "profile" }],
       ];
       if (isAdmin) buttons.push([{ text: "⚙️ Управление", callback_data: "admin" }]);
@@ -931,6 +1188,8 @@ async function handleUpdate(update: any) {
       await handleMyGroups(chatId, messageId, user);
     } else if (data === "schedule") {
       await handleSchedule(chatId, messageId, user);
+    } else if (data === "history") {
+      await handleHistory(chatId, messageId, user);
     } else if (data === "profile") {
       await handleProfile(chatId, messageId, user);
     } else if (data === "admin") {
@@ -986,6 +1245,24 @@ async function handleUpdate(update: any) {
     } else if (data.startsWith("admin_sched_")) {
       const groupId = data.replace("admin_sched_", "");
       await handleAdminSchedule(chatId, messageId, user, groupId);
+    } else if (data.startsWith("arep_")) {
+      const groupId = data.replace("arep_", "");
+      await handleAdminMonthlyReport(chatId, messageId, user, groupId);
+    } else if (data.startsWith("ahist_")) {
+      const groupId = data.replace("ahist_", "");
+      await handleAdminHistory(chatId, messageId, user, groupId);
+    } else if (data.startsWith("asess_")) {
+      const sessionId = data.replace("asess_", "");
+      await handleAdminSessionAttendance(chatId, messageId, user, sessionId);
+    } else if (data.startsWith("anosh_")) {
+      const bookingId = data.replace("anosh_", "");
+      await handleAdminMarkNoShow(chatId, messageId, user, bookingId, false);
+    } else if (data.startsWith("aok_")) {
+      const bookingId = data.replace("aok_", "");
+      await handleAdminMarkNoShow(chatId, messageId, user, bookingId, true);
+    } else if (data.startsWith("admin_session_")) {
+      const sessionId = data.replace("admin_session_", "");
+      await handleAdminSessionAttendance(chatId, messageId, user, sessionId);
     } else if (data === "sa_create_group") {
       await sendMessage(chatId, "Отправьте название новой группы текстовым сообщением.\n\nФормат: <code>/newgroup Название группы</code>");
     } else if (data === "sa_all_groups") {
