@@ -127,9 +127,9 @@ function createMockDeps(
 
 // --- 1. Утилиты форматирования ---
 
-Deno.test("formatTime — переводит время в UTC+3", () => {
-  assertEquals(formatTime("19:00:00"), "22:00");
-  assertEquals(formatTime("09:30:00"), "12:30");
+Deno.test("formatTime — обрезает секунды", () => {
+  assertEquals(formatTime("19:00:00"), "19:00");
+  assertEquals(formatTime("09:30:00"), "09:30");
 });
 
 Deno.test("formatDate — форматирует дату на русском", () => {
@@ -1409,7 +1409,7 @@ Deno.test("handleAdminSaveSchedule — создаёт расписание и г
   assertEquals(insertCalled, true);
   assertStringIncludes(editedMessages[0].text, "Расписание добавлено");
   assertStringIncludes(editedMessages[0].text, "Вторник");
-  assertStringIncludes(editedMessages[0].text, "22:00–00:00");
+  assertStringIncludes(editedMessages[0].text, "19:00–21:00");
   const btns = editedMessages[0].reply_markup.inline_keyboard.flat();
   assertEquals(btns.some((b: any) => b.text === "➕ Добавить ещё"), true);
 });
