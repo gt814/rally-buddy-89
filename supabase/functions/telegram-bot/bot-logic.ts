@@ -14,6 +14,7 @@ const MONTHS_RU = [
   "января", "февраля", "марта", "апреля", "мая", "июня",
   "июля", "августа", "сентября", "октября", "ноября", "декабря",
 ];
+const DEFAULT_TIMEZONE = "Europe/Moscow";
 
 export function formatDate(dateStr: string): string {
   const d = new Date(dateStr);
@@ -23,8 +24,59 @@ export function formatDate(dateStr: string): string {
   return `${dayOfWeek}, ${day} ${month}`;
 }
 
-export function formatTime(time: string): string {
-  return time.substring(0, 5);
+function parseUtcOffsetMinutes(timezone?: string | null): number | null {
+  if (!timezone) return 180;
+  const match = timezone.trim().match(/^(?:UTC|GMT)\s*([+-])(\d{1,2})(?::?(\d{2}))?$/i);
+  if (!match) return null;
+
+  const sign = match[1] === "-" ? -1 : 1;
+  const hours = Number(match[2]);
+  const minutes = Number(match[3] || "0");
+  if (Number.isNaN(hours) || Number.isNaN(minutes) || hours > 23 || minutes > 59) return null;
+  return sign * (hours * 60 + minutes);
+}
+
+export function formatTime(time: string, timezone: string = DEFAULT_TIMEZONE): string {
+  const [hoursPart, minutesPart] = time.split(":");
+  const hours = Number(hoursPart);
+  const minutes = Number(minutesPart);
+
+  if (Number.isNaN(hours) || Number.isNaN(minutes)) {
+    return time.substring(0, 5);
+  }
+
+  const parsedOffsetMinutes = parseUtcOffsetMinutes(timezone);
+  if (parsedOffsetMinutes !== null) {
+    const shiftedTotalMinutes = ((hours * 60 + minutes + parsedOffsetMinutes) % 1440 + 1440) % 1440;
+    const shiftedHours = Math.floor(shiftedTotalMinutes / 60);
+    const shiftedMinutes = shiftedTotalMinutes % 60;
+    return `${String(shiftedHours).padStart(2, "0")}:${String(shiftedMinutes).padStart(2, "0")}`;
+  }
+
+  try {
+    const utcDate = new Date(Date.UTC(2000, 0, 1, hours, minutes));
+    return new Intl.DateTimeFormat("ru-RU", {
+      timeZone: timezone,
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(utcDate);
+  } catch {
+    const fallbackMinutes = 180;
+    const shiftedTotalMinutes = ((hours * 60 + minutes + fallbackMinutes) % 1440 + 1440) % 1440;
+    const shiftedHours = Math.floor(shiftedTotalMinutes / 60);
+    const shiftedMinutes = shiftedTotalMinutes % 60;
+    return `${String(shiftedHours).padStart(2, "0")}:${String(shiftedMinutes).padStart(2, "0")}`;
+  }
+}
+
+async function getGroupTimezone(deps: Deps, groupId: string): Promise<string> {
+  const { data: group } = await deps.supabase
+    .from("groups")
+    .select("timezone")
+    .eq("id", groupId)
+    .single();
+  return group?.timezone || DEFAULT_TIMEZONE;
 }
 
 // ===== DB helpers =====
@@ -323,7 +375,7 @@ export async function handleConfirmLeaveGroup(deps: Deps, chatId: number, messag
 export async function handleBook(deps: Deps, chatId: number, messageId: number, user: any, sessionId: string) {
   const { data: session } = await deps.supabase
     .from("sessions")
-    .select("*, groups(name, freeze_hours, max_participants)")
+    .select("*, groups(name, freeze_hours, max_participants, timezone)")
     .eq("id", sessionId)
     .single();
 
@@ -368,6 +420,7 @@ export async function handleBook(deps: Deps, chatId: number, messageId: number, 
 
   const activeCount = activeBookings?.length || 0;
   const maxP = session.max_participants;
+  const groupTimezone = session.groups?.timezone || DEFAULT_TIMEZONE;
 
   if (activeCount < maxP) {
     const { error } = await deps.supabase.from("bookings").insert({
@@ -390,7 +443,7 @@ export async function handleBook(deps: Deps, chatId: number, messageId: number, 
     await deps.editMessage(
       chatId,
       messageId,
-      `✅ Вы записаны на тренировку!\n\n📅 ${formatDate(session.date)}, ${formatTime(session.start_time)}–${formatTime(session.end_time)}`,
+      `✅ Вы записаны на тренировку!\n\n📅 ${formatDate(session.date)}, ${formatTime(session.start_time, groupTimezone)}–${formatTime(session.end_time, groupTimezone)}`,
       { inline_keyboard: [[{ text: "« К расписанию", callback_data: `sched_${session.group_id}` }]] }
     );
   } else {
@@ -419,7 +472,7 @@ export async function handleBook(deps: Deps, chatId: number, messageId: number, 
     await deps.editMessage(
       chatId,
       messageId,
-      `⏳ Мест нет. Вы в листе ожидания (позиция ${position}).\n\nЕсли место освободится, вы будете записаны автоматически.\n\n📅 ${formatDate(session.date)}, ${formatTime(session.start_time)}–${formatTime(session.end_time)}`,
+      `⏳ Мест нет. Вы в листе ожидания (позиция ${position}).\n\nЕсли место освободится, вы будете записаны автоматически.\n\n📅 ${formatDate(session.date)}, ${formatTime(session.start_time, groupTimezone)}–${formatTime(session.end_time, groupTimezone)}`,
       { inline_keyboard: [[{ text: "« К расписанию", callback_data: `sched_${session.group_id}` }]] }
     );
   }
@@ -428,7 +481,7 @@ export async function handleBook(deps: Deps, chatId: number, messageId: number, 
 export async function handleConfirmCancel(deps: Deps, chatId: number, messageId: number, user: any, sessionId: string) {
   const { data: session } = await deps.supabase
     .from("sessions")
-    .select("*, groups(freeze_hours)")
+    .select("*, groups(freeze_hours, timezone)")
     .eq("id", sessionId)
     .single();
 
@@ -437,6 +490,7 @@ export async function handleConfirmCancel(deps: Deps, chatId: number, messageId:
   const sessionDateTime = new Date(`${session.date}T${session.start_time}`);
   const now = new Date();
   const hoursUntil = (sessionDateTime.getTime() - now.getTime()) / (1000 * 60 * 60);
+  const groupTimezone = session.groups?.timezone || DEFAULT_TIMEZONE;
   if (hoursUntil <= (session.groups?.freeze_hours || 4)) {
     await deps.editMessage(chatId, messageId, "⏰ Отмена невозможна — запись заморожена.", {
       inline_keyboard: [[{ text: "« К расписанию", callback_data: `sched_${session.group_id}` }]],
@@ -469,7 +523,7 @@ export async function handleConfirmCancel(deps: Deps, chatId: number, messageId:
     if (nextInLine.bot_users?.telegram_id) {
       await deps.sendMessage(
         nextInLine.bot_users.telegram_id,
-        `🎉 Место освободилось! Вы записаны на тренировку:\n\n📅 ${formatDate(session.date)}, ${formatTime(session.start_time)}–${formatTime(session.end_time)}`
+        `🎉 Место освободилось! Вы записаны на тренировку:\n\n📅 ${formatDate(session.date)}, ${formatTime(session.start_time, groupTimezone)}–${formatTime(session.end_time, groupTimezone)}`
       );
     }
   }
@@ -702,14 +756,15 @@ export async function handleAdminEditMenu(deps: Deps, chatId: number, messageId:
   text += `📝 Название: ${group.name}\n`;
   text += `👥 Макс. участников: ${group.max_participants}\n`;
   text += `⏰ Заморозка: ${group.freeze_hours}ч\n`;
-  text += `🌍 Часовой пояс: ${group.timezone}\n\n`;
+  text += `🌍 Часовой пояс: ${group.timezone || DEFAULT_TIMEZONE}\n\n`;
   text += `Выберите параметр для изменения:`;
 
   await deps.editMessage(chatId, messageId, text, {
     inline_keyboard: [
       [{ text: "👥 Макс. участников", callback_data: `aedit_max_${groupId}` }],
       [{ text: "⏰ Заморозка (часы)", callback_data: `aedit_freeze_${groupId}` }],
-      [{ text: "📝 Название / 🌍 Часовой пояс", callback_data: `aedit_text_${groupId}` }],
+      [{ text: "📝 Название", callback_data: `aedit_name_${groupId}` }],
+      [{ text: "🌍 Часовой пояс", callback_data: `aedit_timezone_${groupId}` }],
       [{ text: "« Назад", callback_data: `admin_group_${groupId}` }],
     ],
   });
@@ -790,18 +845,44 @@ export async function handleAdminSetField(deps: Deps, chatId: number, messageId:
 }
 
 export async function handleAdminEditText(deps: Deps, chatId: number, messageId: number, groupId: string) {
-  const { data: group } = await deps.supabase.from("groups").select("name").eq("id", groupId).single();
+  const { data: group } = await deps.supabase.from("groups").select("name, timezone").eq("id", groupId).single();
   const shortId = groupId.substring(0, 8);
 
   await deps.editMessage(
     chatId,
     messageId,
-    `Для изменения названия или часового пояса используйте команды:\n\n` +
-    `📝 <code>/editgroup ${shortId} name Новое название</code>\n` +
-    `🌍 <code>/editgroup ${shortId} timezone Europe/Berlin</code>`,
+    `📝 Название: <b>${group?.name || "—"}</b>\n` +
+    `Используйте: <code>/editgroup ${shortId} name Новое название</code>\n\n` +
+    `🌍 Таймзона: <b>${group?.timezone || DEFAULT_TIMEZONE}</b>\n` +
+    `Используйте: <code>/editgroup ${shortId} timezone Europe/Berlin</code>\n` +
+    `или <code>/editgroup ${shortId} timezone UTC+3</code>`,
     {
       inline_keyboard: [[{ text: "« Назад", callback_data: `aedit_${groupId}` }]],
     }
+  );
+}
+
+export async function handleAdminEditName(deps: Deps, chatId: number, messageId: number, groupId: string) {
+  const shortId = groupId.substring(0, 8);
+  await deps.editMessage(
+    chatId,
+    messageId,
+    `Для изменения названия используйте команду:\n\n📝 <code>/editgroup ${shortId} name Новое название</code>`,
+    { inline_keyboard: [[{ text: "« Назад", callback_data: `aedit_${groupId}` }]] }
+  );
+}
+
+export async function handleAdminEditTimezone(deps: Deps, chatId: number, messageId: number, groupId: string) {
+  const { data: group } = await deps.supabase.from("groups").select("timezone").eq("id", groupId).single();
+  const shortId = groupId.substring(0, 8);
+  await deps.editMessage(
+    chatId,
+    messageId,
+    `Текущая таймзона: <b>${group?.timezone || DEFAULT_TIMEZONE}</b>\n\n` +
+    `Для изменения используйте:\n` +
+    `<code>/editgroup ${shortId} timezone Europe/Berlin</code>\n` +
+    `или <code>/editgroup ${shortId} timezone UTC+3</code>`,
+    { inline_keyboard: [[{ text: "« Назад", callback_data: `aedit_${groupId}` }]] }
   );
 }
 
@@ -882,6 +963,7 @@ export async function handleAdminScheduleTemplates(deps: Deps, chatId: number, m
     .eq("group_id", groupId)
     .order("day_of_week", { ascending: true })
     .order("start_time", { ascending: true });
+  const groupTimezone = await getGroupTimezone(deps, groupId);
 
   let text = "📅 <b>Шаблоны расписания</b>\n\n";
   const buttons: any[][] = [];
@@ -890,9 +972,9 @@ export async function handleAdminScheduleTemplates(deps: Deps, chatId: number, m
     text += "Расписание пока не настроено.\n";
   } else {
     for (const s of schedules) {
-      text += `• ${DAYS_FULL_RU[s.day_of_week]} ${formatTime(s.start_time)}–${formatTime(s.end_time)}\n`;
+      text += `• ${DAYS_FULL_RU[s.day_of_week]} ${formatTime(s.start_time, groupTimezone)}–${formatTime(s.end_time, groupTimezone)}\n`;
       buttons.push([
-        { text: `🗑 ${DAYS_RU[s.day_of_week]} ${formatTime(s.start_time)}–${formatTime(s.end_time)}`, callback_data: `asched_del_${s.id}` },
+        { text: `🗑 ${DAYS_RU[s.day_of_week]} ${formatTime(s.start_time, groupTimezone)}–${formatTime(s.end_time, groupTimezone)}`, callback_data: `asched_del_${s.id}` },
       ]);
     }
   }
@@ -988,11 +1070,12 @@ export async function handleAdminSaveSchedule(deps: Deps, chatId: number, messag
   });
 
   await generateSessions(deps, groupId);
+  const groupTimezone = await getGroupTimezone(deps, groupId);
 
   await deps.editMessage(
     chatId,
     messageId,
-    `✅ Расписание добавлено!\n\n${DAYS_FULL_RU[day]} ${startTime}–${endTime}\n\nСессии сгенерированы на следующую неделю (Пн–Вс).`,
+    `✅ Расписание добавлено!\n\n${DAYS_FULL_RU[day]} ${formatTime(startTime, groupTimezone)}–${formatTime(endTime, groupTimezone)}\n\nСессии сгенерированы на следующую неделю (Пн–Вс).`,
     {
       inline_keyboard: [
         [{ text: "➕ Добавить ещё", callback_data: `asched_add_${groupId}` }],
@@ -1021,11 +1104,12 @@ export async function handleAdminDeleteScheduleConfirm(deps: Deps, chatId: numbe
   }
 
   const resolvedGroupId = schedule.group_id;
+  const groupTimezone = await getGroupTimezone(deps, resolvedGroupId);
 
   await deps.editMessage(
     chatId,
     messageId,
-    `⚠️ Удалить расписание?\n\n${DAYS_FULL_RU[schedule.day_of_week]} ${formatTime(schedule.start_time)}–${formatTime(schedule.end_time)}\n\nБудущие сессии по этому шаблону также будут удалены.`,
+    `⚠️ Удалить расписание?\n\n${DAYS_FULL_RU[schedule.day_of_week]} ${formatTime(schedule.start_time, groupTimezone)}–${formatTime(schedule.end_time, groupTimezone)}\n\nБудущие сессии по этому шаблону также будут удалены.`,
     {
       inline_keyboard: [
         [
@@ -1088,6 +1172,7 @@ export async function handleAdminConfirmCancelSession(deps: Deps, chatId: number
     .single();
 
   if (!session) return;
+  const groupTimezone = await getGroupTimezone(deps, session.group_id);
 
   await deps.supabase.from("sessions").update({ status: "cancelled" }).eq("id", sessionId);
 
@@ -1117,7 +1202,7 @@ export async function handleAdminConfirmCancelSession(deps: Deps, chatId: number
     if (recipient?.telegram_id) {
       await deps.sendMessage(
         recipient.telegram_id,
-        `❌ Тренировка отменена администратором:\n\n📅 ${formatDate(session.date)}, ${formatTime(session.start_time)}–${formatTime(session.end_time)}`
+        `❌ Тренировка отменена администратором:\n\n📅 ${formatDate(session.date)}, ${formatTime(session.start_time, groupTimezone)}–${formatTime(session.end_time, groupTimezone)}`
       );
     }
   }

@@ -64,7 +64,7 @@ export function SessionList({ group, sessions, bookings, loading }: SessionListP
                       </div>
                       <div>
                         <p className="font-medium text-foreground">
-                          {formatTime(session.start_time)}–{formatTime(session.end_time)}
+                          {formatTime(session.start_time, group.timezone)}–{formatTime(session.end_time, group.timezone)}
                         </p>
                         <p className="text-sm text-muted-foreground">
                           {formatDateRu(session.date)}
