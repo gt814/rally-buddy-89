@@ -1362,7 +1362,10 @@ async function handleUpdate(update: any) {
 
       await sendMessage(
         chatId,
-        `✅ Группа «${name}» создана!\n\n🔗 Инвайт: <code>join_${group.invite_code}</code>\n\nТеперь настройте расписание: /schedule_${group.id.substring(0, 8)}`
+        `✅ Группа «${name}» создана!\n\n🔗 Инвайт: <code>join_${group.invite_code}</code>\n\nТеперь настройте расписание кнопкой ниже или через меню «⚙️ Управление».`,
+        {
+          inline_keyboard: [[{ text: "🗓 Шаблоны расписания", callback_data: `asched_list_${group.id}` }]],
+        }
       );
     }
   }
