@@ -890,7 +890,7 @@ async function handleAdminGroup(chatId: number, messageId: number, user: any, gr
     [{ text: "🗓 Шаблоны расписания", callback_data: `asched_list_${groupId}` }],
     [{ text: "👥 Участники", callback_data: `admin_members_${groupId}` }],
     [{ text: "🔗 Новая инвайт-ссылка", callback_data: `admin_newinvite_${groupId}` }],
-    [{ text: "✏️ Редактировать", callback_data: `aedit_${groupId}` }, { text: "🗑 Удалить", callback_data: `adel_${groupId}` }],
+    [{ text: "⚙️ Настройки", callback_data: `aedit_${groupId}` }, { text: "🗑 Удалить", callback_data: `adel_${groupId}` }],
     [{ text: "« Назад", callback_data: "admin" }],
   ];
 
