@@ -34,7 +34,7 @@ export function GroupCard({ group, isSelected, onClick }: GroupCardProps) {
           <div className="flex-1 min-w-0">
             <p className="font-semibold text-foreground truncate">{group.name}</p>
             <p className="text-xs text-muted-foreground">
-              Макс: {group.max_participants} · Заморозка: {group.freeze_hours}ч
+              Макс: {group.max_participants} · Время фиксации: за {group.freeze_hours}ч
             </p>
           </div>
         </div>

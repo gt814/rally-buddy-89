@@ -79,6 +79,17 @@ async function getGroupTimezone(deps: Deps, groupId: string): Promise<string> {
   return group?.timezone || DEFAULT_TIMEZONE;
 }
 
+function getFreezeContext(sessionDate: string, sessionStartTime: string, freezeHours: number) {
+  const sessionDateTime = new Date(`${sessionDate}T${sessionStartTime}`);
+  const now = new Date();
+  const hoursUntil = (sessionDateTime.getTime() - now.getTime()) / (1000 * 60 * 60);
+  return {
+    freezeHours,
+    hoursUntil,
+    isFrozen: hoursUntil <= freezeHours,
+  };
+}
+
 // ===== DB helpers =====
 export async function getOrCreateUser(deps: Deps, telegramUser: any) {
   const { data: existing } = await deps.supabase
@@ -401,12 +412,9 @@ export async function handleBook(deps: Deps, chatId: number, messageId: number, 
     return;
   }
 
-  // Check freeze
-  const sessionDateTime = new Date(`${session.date}T${session.start_time}`);
-  const now = new Date();
-  const hoursUntil = (sessionDateTime.getTime() - now.getTime()) / (1000 * 60 * 60);
-  if (hoursUntil <= (session.groups?.freeze_hours || 4)) {
-    await deps.editMessage(chatId, messageId, "⏰ Запись закрыта (заморозка).", {
+  const freeze = getFreezeContext(session.date, session.start_time, session.groups?.freeze_hours || 4);
+  if (freeze.isFrozen) {
+    await deps.editMessage(chatId, messageId, `⏰ Запись закрыта — время фиксации (за ${freeze.freezeHours}ч).`, {
       inline_keyboard: [[{ text: "« Назад", callback_data: `sched_${session.group_id}` }]],
     });
     return;
@@ -487,12 +495,10 @@ export async function handleConfirmCancel(deps: Deps, chatId: number, messageId:
 
   if (!session) return;
 
-  const sessionDateTime = new Date(`${session.date}T${session.start_time}`);
-  const now = new Date();
-  const hoursUntil = (sessionDateTime.getTime() - now.getTime()) / (1000 * 60 * 60);
   const groupTimezone = session.groups?.timezone || DEFAULT_TIMEZONE;
-  if (hoursUntil <= (session.groups?.freeze_hours || 4)) {
-    await deps.editMessage(chatId, messageId, "⏰ Отмена невозможна — запись заморожена.", {
+  const freeze = getFreezeContext(session.date, session.start_time, session.groups?.freeze_hours || 4);
+  if (freeze.isFrozen) {
+    await deps.editMessage(chatId, messageId, `⏰ Отмена невозможна — время фиксации (за ${freeze.freezeHours}ч).`, {
       inline_keyboard: [[{ text: "« К расписанию", callback_data: `sched_${session.group_id}` }]],
     });
     return;
@@ -534,18 +540,28 @@ export async function handleConfirmCancel(deps: Deps, chatId: number, messageId:
 }
 
 export async function handleCancelWaitlist(deps: Deps, chatId: number, messageId: number, user: any, sessionId: string) {
+  const { data: session } = await deps.supabase
+    .from("sessions")
+    .select("group_id, date, start_time, groups(freeze_hours)")
+    .eq("id", sessionId)
+    .single();
+
+  if (!session) return;
+
+  const freeze = getFreezeContext(session.date, session.start_time, session.groups?.freeze_hours || 4);
+  if (freeze.isFrozen) {
+    await deps.editMessage(chatId, messageId, `⏰ Выход из очереди невозможен — время фиксации (за ${freeze.freezeHours}ч).`, {
+      inline_keyboard: [[{ text: "« К расписанию", callback_data: `sched_${session.group_id}` }]],
+    });
+    return;
+  }
+
   await deps.supabase
     .from("bookings")
     .update({ status: "cancelled", cancelled_at: new Date().toISOString() })
     .eq("session_id", sessionId)
     .eq("user_id", user.id)
     .eq("status", "waitlist");
-
-  const { data: session } = await deps.supabase
-    .from("sessions")
-    .select("group_id")
-    .eq("id", sessionId)
-    .single();
 
   await deps.editMessage(chatId, messageId, "✅ Вы покинули лист ожидания.", {
     inline_keyboard: [[{ text: "« К расписанию", callback_data: `sched_${session?.group_id}` }]],
@@ -755,14 +771,14 @@ export async function handleAdminEditMenu(deps: Deps, chatId: number, messageId:
   let text = `✏️ <b>Редактирование «${group.name}»</b>\n\n`;
   text += `📝 Название: ${group.name}\n`;
   text += `👥 Макс. участников: ${group.max_participants}\n`;
-  text += `⏰ Заморозка: ${group.freeze_hours}ч\n`;
+  text += `⏰ Время фиксации: за ${group.freeze_hours}ч\n`;
   text += `🌍 Часовой пояс: ${group.timezone || DEFAULT_TIMEZONE}\n\n`;
   text += `Выберите параметр для изменения:`;
 
   await deps.editMessage(chatId, messageId, text, {
     inline_keyboard: [
       [{ text: "👥 Макс. участников", callback_data: `aedit_max_${groupId}` }],
-      [{ text: "⏰ Заморозка (часы)", callback_data: `aedit_freeze_${groupId}` }],
+      [{ text: "⏰ Время фиксации (часы)", callback_data: `aedit_freeze_${groupId}` }],
       [{ text: "📝 Название", callback_data: `aedit_name_${groupId}` }],
       [{ text: "🌍 Часовой пояс", callback_data: `aedit_timezone_${groupId}` }],
       [{ text: "« Назад", callback_data: `admin_group_${groupId}` }],
@@ -824,7 +840,7 @@ export async function handleAdminEditFreeze(deps: Deps, chatId: number, messageI
   }
   rows.push([{ text: "« Назад", callback_data: `aedit_${groupId}` }]);
 
-  await deps.editMessage(chatId, messageId, `⏰ Выберите часы заморозки (сейчас: ${current}):`, {
+  await deps.editMessage(chatId, messageId, `⏰ Выберите время фиксации (сейчас: за ${current}ч):`, {
     inline_keyboard: rows,
   });
 }
@@ -833,7 +849,7 @@ export async function handleAdminSetField(deps: Deps, chatId: number, messageId:
   const dbField = field === "max" ? "max_participants" : "freeze_hours";
   await deps.supabase.from("groups").update({ [dbField]: value }).eq("id", groupId);
 
-  const label = field === "max" ? "Макс. участников" : "Заморозка";
+  const label = field === "max" ? "Макс. участников" : "Время фиксации";
   const suffix = field === "freeze" ? "ч" : "";
 
   await deps.editMessage(chatId, messageId, `✅ ${label} изменено на <b>${value}${suffix}</b>`, {
@@ -1167,11 +1183,19 @@ export async function handleAdminConfirmDeleteSchedule(deps: Deps, chatId: numbe
 export async function handleAdminConfirmCancelSession(deps: Deps, chatId: number, messageId: number, sessionId: string) {
   const { data: session } = await deps.supabase
     .from("sessions")
-    .select("*")
+    .select("*, groups(freeze_hours)")
     .eq("id", sessionId)
     .single();
 
   if (!session) return;
+  const freeze = getFreezeContext(session.date, session.start_time, session.groups?.freeze_hours || 4);
+  if (freeze.isFrozen) {
+    await deps.editMessage(chatId, messageId, `⏰ Отмена тренировки невозможна — время фиксации (за ${freeze.freezeHours}ч).`, {
+      inline_keyboard: [[{ text: "« К расписанию", callback_data: `admin_sched_${session.group_id}` }]],
+    });
+    return;
+  }
+
   const groupTimezone = await getGroupTimezone(deps, session.group_id);
 
   await deps.supabase.from("sessions").update({ status: "cancelled" }).eq("id", sessionId);
