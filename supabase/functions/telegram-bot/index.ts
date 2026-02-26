@@ -797,8 +797,8 @@ async function handleAdminGroup(chatId: number, messageId: number, user: any, gr
   text += `🔗 Инвайт: <code>t.me/${botName}?start=join_${group.invite_code}</code>`;
 
   const buttons = [
-    [{ text: "📅 Расписание группы", callback_data: `admin_sched_${groupId}` }],
-    [{ text: "📅 Управление расписанием", callback_data: `asched_list_${groupId}` }],
+    [{ text: "📅 Ближайшие тренировки", callback_data: `admin_sched_${groupId}` }],
+    [{ text: "🗓 Шаблоны расписания", callback_data: `asched_list_${groupId}` }],
     [{ text: "👥 Участники", callback_data: `admin_members_${groupId}` }],
     [{ text: "⚠️ Страйки", callback_data: `admin_strikes_${groupId}` }],
     [{ text: "🔗 Новая инвайт-ссылка", callback_data: `admin_newinvite_${groupId}` }],
