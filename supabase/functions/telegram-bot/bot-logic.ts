@@ -340,17 +340,10 @@ export async function handleBook(deps: Deps, chatId: number, messageId: number, 
     .single();
 
   if (membership?.is_banned) {
-    const { data: strikes } = await deps.supabase
-      .from("strikes")
-      .select("id")
-      .eq("user_id", user.id)
-      .eq("group_id", session.group_id)
-      .gt("expires_at", new Date().toISOString());
-
     await deps.editMessage(
       chatId,
       messageId,
-      `❌ Вы заблокированы в этой группе.\nАктивных страйков: ${strikes?.length || 0}\n\nОбратитесь к администратору.`,
+      "❌ Вы заблокированы в этой группе.\n\nОбратитесь к администратору.",
       { inline_keyboard: [[{ text: "« Назад", callback_data: `sched_${session.group_id}` }]] }
     );
     return;
@@ -519,25 +512,11 @@ export async function handleProfile(deps: Deps, chatId: number, messageId: numbe
     (b: any) => b.sessions?.date >= today
   ).length;
 
-  const { data: strikes } = await deps.supabase
-    .from("strikes")
-    .select("id, group_id, groups(name)")
-    .eq("user_id", user.id)
-    .gt("expires_at", new Date().toISOString());
-
   let text = `👤 <b>Профиль</b>\n\n`;
   text += `Имя: ${user.first_name || "—"} ${user.last_name || ""}\n`;
   if (user.username) text += `Username: @${user.username}\n`;
   text += `\n📋 Групп: ${groups.length}\n`;
   text += `📝 Предстоящих тренировок: ${upcoming}\n`;
-  text += `⚠️ Активных страйков: ${strikes?.length || 0}\n`;
-
-  if (strikes && strikes.length > 0) {
-    text += "\n<b>Страйки:</b>\n";
-    for (const s of strikes) {
-      text += `• ${(s as any).groups?.name || "?"}\n`;
-    }
-  }
 
   await deps.editMessage(chatId, messageId, text, {
     inline_keyboard: [[{ text: "« Назад", callback_data: "main_menu" }]],
@@ -692,7 +671,6 @@ export async function handleDeleteGroup(
       .in("status", ["active", "waitlist"]);
   }
   await deps.supabase.from("sessions").delete().eq("group_id", group.id);
-  await deps.supabase.from("strikes").delete().eq("group_id", group.id);
   await deps.supabase.from("groups").delete().eq("id", group.id);
 
   await deps.sendMessage(chatId, `✅ Группа «${group.name}» удалена.`);
@@ -837,7 +815,7 @@ export async function handleAdminDeleteConfirm(deps: Deps, chatId: number, messa
   await deps.editMessage(
     chatId,
     messageId,
-    `⚠️ <b>Удаление группы «${group?.name}»</b>\n\nВсе данные будут удалены:\n• Участники и администраторы\n• Расписание и сессии\n• Бронирования и страйки\n\nВы уверены?`,
+    `⚠️ <b>Удаление группы «${group?.name}»</b>\n\nВсе данные будут удалены:\n• Участники и администраторы\n• Расписание и сессии\n• Бронирования\n\nВы уверены?`,
     {
       inline_keyboard: [
         [
@@ -873,7 +851,6 @@ export async function handleAdminConfirmDelete(deps: Deps, chatId: number, messa
       .eq("session_id", s.id).in("status", ["active", "waitlist"]);
   }
   await deps.supabase.from("sessions").delete().eq("group_id", groupId);
-  await deps.supabase.from("strikes").delete().eq("group_id", groupId);
   await deps.supabase.from("groups").delete().eq("id", groupId);
 
   await deps.editMessage(chatId, messageId, `✅ Группа «${group.name}» удалена.`, {

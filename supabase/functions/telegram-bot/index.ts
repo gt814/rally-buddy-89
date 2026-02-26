@@ -512,17 +512,10 @@ async function handleBook(chatId: number, messageId: number, user: any, sessionI
     .single();
 
   if (membership?.is_banned) {
-    const { data: strikes } = await supabase
-      .from("strikes")
-      .select("id")
-      .eq("user_id", user.id)
-      .eq("group_id", session.group_id)
-      .gt("expires_at", new Date().toISOString());
-
     await editMessage(
       chatId,
       messageId,
-      `❌ Вы заблокированы в этой группе.\nАктивных страйков: ${strikes?.length || 0}\n\nОбратитесь к администратору.`,
+      "❌ Вы заблокированы в этой группе.\n\nОбратитесь к администратору.",
       { inline_keyboard: [[{ text: "« Назад", callback_data: `sched_${session.group_id}` }]] }
     );
     return;
@@ -710,26 +703,11 @@ async function handleProfile(chatId: number, messageId: number, user: any) {
     (b: any) => b.sessions?.date >= today
   ).length;
 
-  // Count active strikes
-  const { data: strikes } = await supabase
-    .from("strikes")
-    .select("id, group_id, groups(name)")
-    .eq("user_id", user.id)
-    .gt("expires_at", new Date().toISOString());
-
   let text = `👤 <b>Профиль</b>\n\n`;
   text += `Имя: ${user.first_name || "—"} ${user.last_name || ""}\n`;
   if (user.username) text += `Username: @${user.username}\n`;
   text += `\n📋 Групп: ${groups.length}\n`;
   text += `📝 Предстоящих тренировок: ${upcoming}\n`;
-  text += `⚠️ Активных страйков: ${strikes?.length || 0}\n`;
-
-  if (strikes && strikes.length > 0) {
-    text += "\n<b>Страйки:</b>\n";
-    for (const s of strikes) {
-      text += `• ${(s as any).groups?.name || "?"}\n`;
-    }
-  }
 
   await editMessage(chatId, messageId, text, {
     inline_keyboard: [[{ text: "« Назад", callback_data: "main_menu" }]],
@@ -800,7 +778,6 @@ async function handleAdminGroup(chatId: number, messageId: number, user: any, gr
     [{ text: "📅 Ближайшие тренировки", callback_data: `admin_sched_${groupId}` }],
     [{ text: "🗓 Шаблоны расписания", callback_data: `asched_list_${groupId}` }],
     [{ text: "👥 Участники", callback_data: `admin_members_${groupId}` }],
-    [{ text: "⚠️ Страйки", callback_data: `admin_strikes_${groupId}` }],
     [{ text: "🔗 Новая инвайт-ссылка", callback_data: `admin_newinvite_${groupId}` }],
     [{ text: "✏️ Редактировать", callback_data: `aedit_${groupId}` }, { text: "🗑 Удалить", callback_data: `adel_${groupId}` }],
     [{ text: "« Назад", callback_data: "admin" }],
@@ -1054,29 +1031,6 @@ async function handleUpdate(update: any) {
         text += `${m.is_banned ? "🚫" : "✅"} ${name}`;
         if (u?.username) text += ` (@${u.username})`;
         text += "\n";
-      }
-      await editMessage(chatId, messageId, text, {
-        inline_keyboard: [[{ text: "« Назад", callback_data: `admin_group_${groupId}` }]],
-      });
-    } else if (data.startsWith("admin_strikes_")) {
-      const groupId = data.replace("admin_strikes_", "");
-      const { data: strikes } = await supabase
-        .from("strikes")
-        .select("*, bot_users(first_name, username)")
-        .eq("group_id", groupId)
-        .gt("expires_at", new Date().toISOString());
-
-      if (!strikes || strikes.length === 0) {
-        await editMessage(chatId, messageId, "⚠️ Активных страйков нет.", {
-          inline_keyboard: [[{ text: "« Назад", callback_data: `admin_group_${groupId}` }]],
-        });
-        return;
-      }
-
-      let text = "⚠️ <b>Активные страйки:</b>\n\n";
-      for (const s of strikes) {
-        const u = (s as any).bot_users;
-        text += `• ${u?.first_name || u?.username || "?"} — ${new Date(s.created_at).toLocaleDateString("ru")}\n`;
       }
       await editMessage(chatId, messageId, text, {
         inline_keyboard: [[{ text: "« Назад", callback_data: `admin_group_${groupId}` }]],
@@ -1345,7 +1299,7 @@ async function handleUpdate(update: any) {
       }
       const { data: group } = await supabase.from("groups").select("name").eq("id", groupId).single();
       await editMessage(chatId, messageId,
-        `⚠️ <b>Удаление группы «${group?.name}»</b>\n\nВсе данные будут удалены:\n• Участники и администраторы\n• Расписание и сессии\n• Бронирования и страйки\n\nВы уверены?`,
+        `⚠️ <b>Удаление группы «${group?.name}»</b>\n\nВсе данные будут удалены:\n• Участники и администраторы\n• Расписание и сессии\n• Бронирования\n\nВы уверены?`,
         {
           inline_keyboard: [
             [{ text: "✅ Да, удалить", callback_data: `aconfirm_del_${groupId}` }, { text: "❌ Нет", callback_data: `admin_group_${groupId}` }],
@@ -1371,7 +1325,6 @@ async function handleUpdate(update: any) {
         await supabase.from("bookings").update({ status: "cancelled", cancelled_at: new Date().toISOString() }).eq("session_id", s.id).in("status", ["active", "waitlist"]);
       }
       await supabase.from("sessions").delete().eq("group_id", groupId);
-      await supabase.from("strikes").delete().eq("group_id", groupId);
       await supabase.from("groups").delete().eq("id", groupId);
       await editMessage(chatId, messageId, `✅ Группа «${group.name}» удалена.`, {
         inline_keyboard: [[{ text: "« К управлению", callback_data: "admin" }]],
@@ -1510,7 +1463,6 @@ async function handleUpdate(update: any) {
       await supabase.from("bookings").update({ status: "cancelled", cancelled_at: new Date().toISOString() }).eq("session_id", s.id).in("status", ["active", "waitlist"]);
     }
     await supabase.from("sessions").delete().eq("group_id", group.id);
-    await supabase.from("strikes").delete().eq("group_id", group.id);
     await supabase.from("groups").delete().eq("id", group.id);
 
     await sendMessage(chatId, `✅ Группа «${group.name}» удалена.`);

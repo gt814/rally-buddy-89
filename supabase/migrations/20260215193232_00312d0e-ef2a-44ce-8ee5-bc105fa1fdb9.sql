@@ -88,16 +88,6 @@ CREATE UNIQUE INDEX idx_bookings_active_unique
 ON public.bookings (session_id, user_id) 
 WHERE status IN ('active', 'waitlist');
 
--- Страйки
-CREATE TABLE public.strikes (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES public.bot_users(id) ON DELETE CASCADE,
-  group_id UUID NOT NULL REFERENCES public.groups(id) ON DELETE CASCADE,
-  session_id UUID REFERENCES public.sessions(id) ON DELETE SET NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  expires_at TIMESTAMPTZ NOT NULL DEFAULT (now() + interval '90 days')
-);
-
 -- Лог уведомлений
 CREATE TABLE public.notifications_log (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -112,8 +102,6 @@ CREATE TABLE public.notifications_log (
 CREATE INDEX idx_sessions_group_date ON public.sessions(group_id, date);
 CREATE INDEX idx_bookings_session ON public.bookings(session_id, status);
 CREATE INDEX idx_bookings_user ON public.bookings(user_id, status);
-CREATE INDEX idx_strikes_user_group ON public.strikes(user_id, group_id);
-CREATE INDEX idx_strikes_expires ON public.strikes(expires_at);
 CREATE INDEX idx_group_members_group ON public.group_members(group_id);
 CREATE INDEX idx_group_members_user ON public.group_members(user_id);
 
@@ -126,7 +114,6 @@ ALTER TABLE public.group_members ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.schedules ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.bookings ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.strikes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.notifications_log ENABLE ROW LEVEL SECURITY;
 
 -- Политики для service_role (edge functions используют service role key)
@@ -138,7 +125,6 @@ CREATE POLICY "Service role full access" ON public.group_members FOR ALL TO serv
 CREATE POLICY "Service role full access" ON public.schedules FOR ALL TO service_role USING (true) WITH CHECK (true);
 CREATE POLICY "Service role full access" ON public.sessions FOR ALL TO service_role USING (true) WITH CHECK (true);
 CREATE POLICY "Service role full access" ON public.bookings FOR ALL TO service_role USING (true) WITH CHECK (true);
-CREATE POLICY "Service role full access" ON public.strikes FOR ALL TO service_role USING (true) WITH CHECK (true);
 CREATE POLICY "Service role full access" ON public.notifications_log FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 -- Анонимный доступ на чтение для веб-панели (будет через authenticated позже)

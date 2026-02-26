@@ -335,55 +335,6 @@ export type Database = {
           },
         ]
       }
-      strikes: {
-        Row: {
-          created_at: string
-          expires_at: string
-          group_id: string
-          id: string
-          session_id: string | null
-          user_id: string
-        }
-        Insert: {
-          created_at?: string
-          expires_at?: string
-          group_id: string
-          id?: string
-          session_id?: string | null
-          user_id: string
-        }
-        Update: {
-          created_at?: string
-          expires_at?: string
-          group_id?: string
-          id?: string
-          session_id?: string | null
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "strikes_group_id_fkey"
-            columns: ["group_id"]
-            isOneToOne: false
-            referencedRelation: "groups"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "strikes_session_id_fkey"
-            columns: ["session_id"]
-            isOneToOne: false
-            referencedRelation: "sessions"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "strikes_user_id_fkey"
-            columns: ["user_id"]
-            isOneToOne: false
-            referencedRelation: "bot_users"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
     }
     Views: {
       [_ in never]: never

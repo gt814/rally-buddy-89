@@ -47,7 +47,6 @@ flowchart LR
         SCH[schedules]
         S[sessions]
         B[bookings]
-        ST[strikes]
     end
 
     U --> H
@@ -62,7 +61,6 @@ flowchart LR
     Sched --> SCH
     Sched --> S
     Book --> B
-    Admin --> ST
 ```
 
 ## Слой базы данных (основные сущности)
@@ -72,7 +70,6 @@ erDiagram
     bot_users ||--o{ group_members : "user_id"
     bot_users ||--o{ group_admins : "user_id"
     bot_users ||--o{ bookings : "user_id"
-    bot_users ||--o{ strikes : "user_id"
 
     groups ||--o{ group_members : "group_id"
     groups ||--o{ group_admins : "group_id"
