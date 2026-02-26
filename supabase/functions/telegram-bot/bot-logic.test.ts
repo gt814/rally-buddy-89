@@ -314,7 +314,7 @@ Deno.test("handleStart join — несуществующая группа", asyn
   assertStringIncludes(sentMessages[0].text, "не найдена");
 });
 
-// --- 7. Мои группы ---
+// --- 7. Группы ---
 
 Deno.test("handleMyGroups — нет групп", async () => {
   const { deps, editedMessages } = createMockDeps({

@@ -191,9 +191,9 @@ export async function handleStart(deps: Deps, chatId: number, user: any, startPa
   const isAdmin = user.is_super_admin || (await getUserAdminGroups(deps, user.id)).length > 0;
 
   const buttons: any[][] = [
-    [{ text: "📋 Мои группы", callback_data: "my_groups" }],
+    [{ text: "📋 Группы", callback_data: "my_groups" }],
     [{ text: "📝 Расписание", callback_data: "schedule" }],
-    [{ text: "👤 Мой профиль", callback_data: "profile" }],
+    [{ text: "👤 Профиль", callback_data: "profile" }],
   ];
 
   if (isAdmin) {
@@ -313,7 +313,7 @@ export async function handleConfirmLeaveGroup(deps: Deps, chatId: number, messag
     `✅ Вы вышли из группы «${groupName}».\nОтменено записей на тренировки: ${cancelledCount}.`,
     {
       inline_keyboard: [
-        [{ text: "📋 Мои группы", callback_data: "my_groups" }],
+        [{ text: "📋 Группы", callback_data: "my_groups" }],
         [{ text: "« В меню", callback_data: "main_menu" }],
       ],
     }

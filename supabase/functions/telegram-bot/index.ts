@@ -246,9 +246,9 @@ async function handleStart(chatId: number, user: any, startParam?: string) {
   const isAdmin = user.is_super_admin || (await getUserAdminGroups(user.id)).length > 0;
 
   const buttons: any[][] = [
-    [{ text: "📋 Мои группы", callback_data: "my_groups" }],
+    [{ text: "📋 Группы", callback_data: "my_groups" }],
     [{ text: "📝 Расписание", callback_data: "schedule" }],
-    [{ text: "👤 Мой профиль", callback_data: "profile" }],
+    [{ text: "👤 Профиль", callback_data: "profile" }],
   ];
 
   if (isAdmin) {
@@ -368,7 +368,7 @@ async function handleConfirmLeaveGroup(chatId: number, messageId: number, user: 
     `✅ Вы вышли из группы «${groupName}».\nОтменено записей на тренировки: ${cancelledCount}.`,
     {
       inline_keyboard: [
-        [{ text: "📋 Мои группы", callback_data: "my_groups" }],
+        [{ text: "📋 Группы", callback_data: "my_groups" }],
         [{ text: "« В меню", callback_data: "main_menu" }],
       ],
     }
@@ -921,9 +921,9 @@ async function handleUpdate(update: any) {
       // Re-show main menu by editing
       const isAdmin = user.is_super_admin || (await getUserAdminGroups(user.id)).length > 0;
       const buttons: any[][] = [
-        [{ text: "📋 Мои группы", callback_data: "my_groups" }],
+        [{ text: "📋 Группы", callback_data: "my_groups" }],
         [{ text: "📝 Расписание", callback_data: "schedule" }],
-        [{ text: "👤 Мой профиль", callback_data: "profile" }],
+        [{ text: "👤 Профиль", callback_data: "profile" }],
       ];
       if (isAdmin) buttons.push([{ text: "⚙️ Управление", callback_data: "admin" }]);
       await editMessage(chatId, messageId, `🏓 <b>Главное меню</b>\n\nВыберите действие:`, { inline_keyboard: buttons });
