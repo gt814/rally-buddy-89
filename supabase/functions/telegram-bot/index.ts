@@ -3,7 +3,6 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN")!;
-const BOT_USERNAME = (Deno.env.get("TELEGRAM_BOT_USERNAME") || "").replace(/^@/, "");
 const SUPER_ADMIN_IDS = (Deno.env.get("SUPER_ADMIN_IDS") || "")
   .split(",")
   .map((id) => parseInt(id.trim()))
@@ -21,6 +20,17 @@ const DEFAULT_TIMEZONE = "Europe/Moscow";
 const WEEK_PUBLICATION_PARTICIPANT_TEXT = "Нажмите, чтобы посмотреть детали.";
 const SCHEDULE_HOURS = Array.from({ length: 16 }, (_, i) => String(i + 8).padStart(2, "0"));
 const SCHEDULE_MINUTES = Array.from({ length: 12 }, (_, i) => String(i * 5).padStart(2, "0"));
+const WEBHOOK_SECRET = Deno.env.get("TELEGRAM_WEBHOOK_SECRET") || "";
+
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < a.length; i++) {
+    mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return mismatch === 0;
+}
+let cachedBotUsername = "";
 
 // ===== Telegram API helpers =====
 async function sendMessage(chatId: number, text: string, reply_markup?: any) {
@@ -68,6 +78,24 @@ async function answerCallback(callbackQueryId: string, text?: string) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ callback_query_id: callbackQueryId, text }),
   });
+}
+
+async function getBotUsername(): Promise<string> {
+  if (cachedBotUsername) return cachedBotUsername;
+
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getMe`);
+    const payload = await response.json();
+    const username = payload?.result?.username;
+    if (typeof username === "string" && username.trim()) {
+      cachedBotUsername = username.replace(/^@/, "");
+      return cachedBotUsername;
+    }
+  } catch (e) {
+    console.error("Failed to resolve bot username via getMe:", e);
+  }
+
+  return "";
 }
 
 // ===== DB helpers =====
@@ -927,8 +955,9 @@ async function handleAdminGroup(chatId: number, messageId: number, user: any, gr
     .eq("group_id", groupId)
     .eq("is_banned", false);
 
-  const inviteLink = BOT_USERNAME
-    ? `t.me/${BOT_USERNAME}?start=join_${group.invite_code}`
+  const botUsername = await getBotUsername();
+  const inviteLink = botUsername
+    ? `t.me/${botUsername}?start=join_${group.invite_code}`
     : `join_${group.invite_code}`;
 
   let text = `⚙️ <b>${group.name}</b>\n\n`;
@@ -2062,8 +2091,31 @@ Deno.serve(async (req) => {
     return new Response(null, {
       headers: {
         "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+        "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-telegram-bot-api-secret-token",
       },
+    });
+  }
+
+  if (req.method !== "POST") {
+    return new Response(JSON.stringify({ ok: false, error: "Method not allowed" }), {
+      status: 405,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  if (!WEBHOOK_SECRET) {
+    console.error("Missing TELEGRAM_WEBHOOK_SECRET");
+    return new Response(JSON.stringify({ ok: false, error: "Webhook is not configured" }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  const providedSecret = req.headers.get("x-telegram-bot-api-secret-token") || "";
+  if (!timingSafeEqual(providedSecret, WEBHOOK_SECRET)) {
+    return new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" },
     });
   }
 

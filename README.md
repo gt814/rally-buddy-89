@@ -253,6 +253,8 @@ supabase db push --linked --password <DB_PASSWORD>
 
 supabase secrets set \
   TELEGRAM_BOT_TOKEN="<TOKEN>" \
+  TELEGRAM_WEBHOOK_SECRET="<RANDOM_LONG_SECRET>" \
+  WEEKLY_GENERATOR_SECRET="<RANDOM_LONG_SECRET>" \
   SUPER_ADMIN_IDS="123456789,987654321" \
   --project-ref <PROJECT_REF>
 
@@ -263,7 +265,9 @@ supabase functions deploy generate-weekly-sessions --project-ref <PROJECT_REF>
 Примечания:
 - `SUPER_ADMIN_IDS` не обязателен.
 - `TELEGRAM_BOT_TOKEN` используется обеими функциями: `telegram-bot` и `generate-weekly-sessions` (для уведомлений о публикации расписания).
-- `TELEGRAM_BOT_USERNAME` — обычная variable (не secret) для функции `telegram-bot`; укажите имя бота без `@`, используется для deep link `t.me/<bot>?start=join_<invite_code>`.
+- `TELEGRAM_WEBHOOK_SECRET` обязателен: `telegram-bot` принимает только webhook с корректным `x-telegram-bot-api-secret-token`.
+- `WEEKLY_GENERATOR_SECRET` обязателен: `generate-weekly-sessions` принимает только `POST` с заголовком `x-weekly-generator-secret`.
+- Имя бота для deep link `t.me/<bot>?start=join_<invite_code>` функция `telegram-bot` определяет автоматически через Telegram API `getMe`.
 - `SUPABASE_URL` и `SUPABASE_SERVICE_ROLE_KEY` в Edge Functions предоставляет Supabase.
 
 ### 5.3 Установка webhook
@@ -271,7 +275,7 @@ supabase functions deploy generate-weekly-sessions --project-ref <PROJECT_REF>
 ```bash
 curl -X POST "https://api.telegram.org/bot<TOKEN>/setWebhook" \
   -H "Content-Type: application/json" \
-  -d '{"url":"https://<PROJECT_REF>.functions.supabase.co/telegram-bot"}'
+  -d '{"url":"https://<PROJECT_REF>.functions.supabase.co/telegram-bot","secret_token":"<RANDOM_LONG_SECRET>"}'
 ```
 
 ### 5.4 Проверка webhook
