@@ -1478,7 +1478,7 @@ async function handleUpdate(update: any) {
       await editMessage(
         chatId,
         messageId,
-        `Текущее время автогенерации (локально для таймзоны группы): <b>${currentTime}</b>\n\n` +
+        `Текущее время автогенерации: <b>${currentTime}</b>.\n\n` +
         `Для изменения используйте:\n` +
         `<code>/editgroup ${shortId} gentime 03:30</code>\n\n` +
         `Формат: HH:MM (24ч).`,
