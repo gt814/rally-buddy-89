@@ -29,6 +29,12 @@ export function formatTime(time: string, timezone: string = DEFAULT_TIMEZONE): s
   return time.substring(0, 5);
 }
 
+function parseGenerationTime(value: string): string | null {
+  const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(value.trim());
+  if (!match) return null;
+  return `${match[1]}:${match[2]}:00`;
+}
+
 async function getGroupTimezone(deps: Deps, groupId: string): Promise<string> {
   const { data: group } = await deps.supabase
     .from("groups")
@@ -125,7 +131,7 @@ export async function getUserAdminGroups(deps: Deps, userId: string) {
 }
 
 // ===== Generate sessions =====
-export async function generateSessions(deps: Deps, groupId: string) {
+export async function generateSessions(deps: Deps, groupId: string, allowUpdates = false) {
   const { data: schedules } = await deps.supabase
     .from("schedules")
     .select("*")
@@ -167,7 +173,7 @@ export async function generateSessions(deps: Deps, groupId: string) {
           end_time: schedule.end_time,
           max_participants: group?.max_participants || 8,
         },
-        { onConflict: "group_id,date,start_time" }
+        { onConflict: "group_id,date,start_time", ignoreDuplicates: !allowUpdates }
       );
   }
 }
@@ -622,13 +628,14 @@ export async function handleEditGroup(
     max: "max_participants",
     freeze: "freeze_hours",
     timezone: "timezone",
+    gentime: "schedule_generation_time",
   };
 
   const dbField = allowedFields[field];
   if (!dbField) {
     await deps.sendMessage(
       chatId,
-      "❌ Неизвестное поле. Допустимые: <code>name</code>, <code>max</code>, <code>freeze</code>, <code>timezone</code>."
+      "❌ Неизвестное поле. Допустимые: <code>name</code>, <code>max</code>, <code>freeze</code>, <code>timezone</code>, <code>gentime</code>."
     );
     return;
   }
@@ -638,6 +645,12 @@ export async function handleEditGroup(
     parsedValue = parseInt(value);
     if (isNaN(parsedValue) || parsedValue <= 0) {
       await deps.sendMessage(chatId, "❌ Значение должно быть положительным числом.");
+      return;
+    }
+  } else if (field === "gentime") {
+    parsedValue = parseGenerationTime(value);
+    if (!parsedValue) {
+      await deps.sendMessage(chatId, "❌ Неверный формат времени. Используйте HH:MM, например 03:30.");
       return;
     }
   }
@@ -731,6 +744,7 @@ export async function handleAdminEditMenu(deps: Deps, chatId: number, messageId:
   text += `📝 Название: ${group.name}\n`;
   text += `👥 Макс. участников: ${group.max_participants}\n`;
   text += `⏰ Время фиксации: за ${group.freeze_hours}ч\n`;
+  text += `🗓 Автогенерация расписания: ${formatTime(group.schedule_generation_time || "03:00:00")}\n`;
   text += `🌍 Часовой пояс: ${group.timezone || DEFAULT_TIMEZONE}\n\n`;
   text += `Выберите параметр для изменения:`;
 
@@ -738,6 +752,7 @@ export async function handleAdminEditMenu(deps: Deps, chatId: number, messageId:
     inline_keyboard: [
       [{ text: "👥 Макс. участников", callback_data: `aedit_max_${groupId}` }],
       [{ text: "⏰ Время фиксации (часы)", callback_data: `aedit_freeze_${groupId}` }],
+      [{ text: "🗓 Время автогенерации", callback_data: `aedit_gentime_${groupId}` }],
       [{ text: "📝 Название", callback_data: `aedit_name_${groupId}` }],
       [{ text: "🌍 Часовой пояс", callback_data: `aedit_timezone_${groupId}` }],
       [{ text: "« Назад", callback_data: `admin_group_${groupId}` }],
@@ -820,7 +835,7 @@ export async function handleAdminSetField(deps: Deps, chatId: number, messageId:
 }
 
 export async function handleAdminEditText(deps: Deps, chatId: number, messageId: number, groupId: string) {
-  const { data: group } = await deps.supabase.from("groups").select("name, timezone").eq("id", groupId).single();
+  const { data: group } = await deps.supabase.from("groups").select("name, timezone, schedule_generation_time").eq("id", groupId).single();
   const shortId = groupId.substring(0, 8);
 
   await deps.editMessage(
@@ -830,7 +845,9 @@ export async function handleAdminEditText(deps: Deps, chatId: number, messageId:
     `Используйте: <code>/editgroup ${shortId} name Новое название</code>\n\n` +
     `🌍 Таймзона: <b>${group?.timezone || DEFAULT_TIMEZONE}</b>\n` +
     `Используйте: <code>/editgroup ${shortId} timezone Europe/Berlin</code>\n` +
-    `или <code>/editgroup ${shortId} timezone UTC+3</code>`,
+    `или <code>/editgroup ${shortId} timezone UTC+3</code>\n\n` +
+    `🗓 Время автогенерации: <b>${formatTime(group?.schedule_generation_time || "03:00:00")}</b>\n` +
+    `Используйте: <code>/editgroup ${shortId} gentime 03:30</code>`,
     {
       inline_keyboard: [[{ text: "« Назад", callback_data: `aedit_${groupId}` }]],
     }
@@ -1044,7 +1061,7 @@ export async function handleAdminSaveSchedule(deps: Deps, chatId: number, messag
     end_time: endTime,
   });
 
-  await generateSessions(deps, groupId);
+  await generateSessions(deps, groupId, true);
   const groupTimezone = await getGroupTimezone(deps, groupId);
 
   await deps.editMessage(

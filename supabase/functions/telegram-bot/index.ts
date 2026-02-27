@@ -156,6 +156,12 @@ function formatTime(time: string, timezone: string = DEFAULT_TIMEZONE): string {
   return time.substring(0, 5);
 }
 
+function parseGenerationTime(value: string): string | null {
+  const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(value.trim());
+  if (!match) return null;
+  return `${match[1]}:${match[2]}:00`;
+}
+
 function getFreezeContext(sessionDate: string, sessionStartTime: string, freezeHours: number) {
   const sessionDateTime = new Date(`${sessionDate}T${sessionStartTime}`);
   const now = new Date();
@@ -178,7 +184,7 @@ function isSessionCompletedNow(date: string, endTime: string): boolean {
 }
 
 // ===== Generate sessions for a group =====
-async function generateSessions(groupId: string) {
+async function generateSessions(groupId: string, allowUpdates = false) {
   const { data: schedules } = await supabase
     .from("schedules")
     .select("*")
@@ -220,7 +226,7 @@ async function generateSessions(groupId: string) {
           end_time: schedule.end_time,
           max_participants: group?.max_participants || 8,
         },
-        { onConflict: "group_id,date,start_time" }
+        { onConflict: "group_id,date,start_time", ignoreDuplicates: !allowUpdates }
       );
   }
 }
@@ -425,9 +431,6 @@ async function handleSchedule(chatId: number, messageId: number, user: any) {
 }
 
 async function showGroupSchedule(chatId: number, messageId: number, user: any, groupId: string, backCallbackData = "schedule") {
-  // Generate sessions on demand
-  await generateSessions(groupId);
-
   const { data: group } = await supabase
     .from("groups")
     .select("name, freeze_hours, timezone")
@@ -852,6 +855,7 @@ async function handleAdminGroup(chatId: number, messageId: number, user: any, gr
   text += `👥 Участников: ${members?.length || 0}\n`;
   text += `🔢 Макс. мест: ${group.max_participants}\n`;
   text += `⏰ Время фиксации: за ${group.freeze_hours}ч\n`;
+  text += `🗓 Автогенерация: ${formatTime(group.schedule_generation_time || "03:00:00")}\n`;
   text += `🔗 Инвайт: <code>t.me/${botName}?start=join_${group.invite_code}</code>`;
 
   const buttons = [
@@ -869,8 +873,6 @@ async function handleAdminGroup(chatId: number, messageId: number, user: any, gr
 }
 
 async function handleAdminSchedule(chatId: number, messageId: number, user: any, groupId: string) {
-  await generateSessions(groupId);
-
   const today = new Date().toISOString().split("T")[0];
   const { data: sessions } = await supabase
     .from("sessions")
@@ -1420,6 +1422,20 @@ async function handleUpdate(update: any) {
         `или <code>/editgroup ${shortId} timezone UTC+3</code>`,
         { inline_keyboard: [[{ text: "« Назад", callback_data: `aedit_${groupId}` }]] }
       );
+    } else if (data.startsWith("aedit_gentime_")) {
+      const groupId = data.replace("aedit_gentime_", "");
+      const shortId = groupId.substring(0, 8);
+      const { data: group } = await supabase.from("groups").select("schedule_generation_time").eq("id", groupId).single();
+      const currentTime = formatTime(group?.schedule_generation_time || "03:00:00");
+      await editMessage(
+        chatId,
+        messageId,
+        `Текущее время автогенерации (локально для таймзоны группы): <b>${currentTime}</b>\n\n` +
+        `Для изменения используйте:\n` +
+        `<code>/editgroup ${shortId} gentime 03:30</code>\n\n` +
+        `Формат: HH:MM (24ч).`,
+        { inline_keyboard: [[{ text: "« Назад", callback_data: `aedit_${groupId}` }]] }
+      );
     } else if (data.startsWith("aedit_text_")) {
       const groupId = data.replace("aedit_text_", "");
       const shortId = groupId.substring(0, 8);
@@ -1429,6 +1445,7 @@ async function handleUpdate(update: any) {
         `Для изменения названия или часового пояса используйте команды:\n\n` +
         `📝 <code>/editgroup ${shortId} name Новое название</code>\n` +
         `🌍 <code>/editgroup ${shortId} timezone Europe/Berlin</code>\n` +
+        `🗓 <code>/editgroup ${shortId} gentime 03:30</code>\n` +
         `или <code>/editgroup ${shortId} timezone UTC+3</code>`,
         { inline_keyboard: [[{ text: "« Назад", callback_data: `aedit_${groupId}` }]] }
       );
@@ -1456,11 +1473,13 @@ async function handleUpdate(update: any) {
       text += `📝 Название: ${group.name}\n`;
       text += `👥 Макс. участников: ${group.max_participants}\n`;
       text += `⏰ Время фиксации: за ${group.freeze_hours}ч\n`;
+      text += `🗓 Автогенерация расписания: ${formatTime(group.schedule_generation_time || "03:00:00")}\n`;
       text += `🌍 Часовой пояс: ${group.timezone || DEFAULT_TIMEZONE}\n\nВыберите параметр для изменения:`;
       await editMessage(chatId, messageId, text, {
         inline_keyboard: [
           [{ text: "👥 Макс. участников", callback_data: `aedit_max_${groupId}` }],
           [{ text: "⏰ Время фиксации (часы)", callback_data: `aedit_freeze_${groupId}` }],
+          [{ text: "🗓 Время автогенерации", callback_data: `aedit_gentime_${groupId}` }],
           [{ text: "📝 Название", callback_data: `aedit_name_${groupId}` }],
           [{ text: "🌍 Часовой пояс", callback_data: `aedit_timezone_${groupId}` }],
           [{ text: "« Назад", callback_data: `admin_group_${groupId}` }],
@@ -1528,7 +1547,7 @@ async function handleUpdate(update: any) {
       const groupId = parts.slice(3).join("_");
       const DAYS_FULL = ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"];
       await supabase.from("schedules").insert({ group_id: groupId, day_of_week: day, start_time: startTime, end_time: endTime });
-      await generateSessions(groupId);
+      await generateSessions(groupId, true);
       const groupTimezone = await getGroupTimezone(groupId);
       await editMessage(chatId, messageId,
         `✅ Расписание добавлено!\n\n${DAYS_FULL[day]} ${formatTime(startTime, groupTimezone)}–${formatTime(endTime, groupTimezone)}\n\nСессии сгенерированы на следующую неделю (Пн–Вс).`,
@@ -1734,7 +1753,7 @@ async function handleUpdate(update: any) {
 
     const parts = update.message.text.split(" ");
     if (parts.length < 4) {
-      await sendMessage(chatId, "Формат: <code>/editgroup GROUP_ID ПОЛЕ ЗНАЧЕНИЕ</code>\n\nПоля: name, max, freeze, timezone\nПример: <code>/editgroup abc12345 max 10</code>");
+      await sendMessage(chatId, "Формат: <code>/editgroup GROUP_ID ПОЛЕ ЗНАЧЕНИЕ</code>\n\nПоля: name, max, freeze, timezone, gentime\nПример: <code>/editgroup abc12345 gentime 03:30</code>");
       return;
     }
 
@@ -1762,10 +1781,16 @@ async function handleUpdate(update: any) {
       return;
     }
 
-    const allowedFields: Record<string, string> = { name: "name", max: "max_participants", freeze: "freeze_hours", timezone: "timezone" };
+    const allowedFields: Record<string, string> = {
+      name: "name",
+      max: "max_participants",
+      freeze: "freeze_hours",
+      timezone: "timezone",
+      gentime: "schedule_generation_time",
+    };
     const dbField = allowedFields[field];
     if (!dbField) {
-      await sendMessage(chatId, "❌ Неизвестное поле. Допустимые: name, max, freeze, timezone.");
+      await sendMessage(chatId, "❌ Неизвестное поле. Допустимые: name, max, freeze, timezone, gentime.");
       return;
     }
 
@@ -1774,6 +1799,12 @@ async function handleUpdate(update: any) {
       parsedValue = parseInt(value);
       if (isNaN(parsedValue) || parsedValue <= 0) {
         await sendMessage(chatId, "❌ Значение должно быть положительным числом.");
+        return;
+      }
+    } else if (field === "gentime") {
+      parsedValue = parseGenerationTime(value);
+      if (!parsedValue) {
+        await sendMessage(chatId, "❌ Неверный формат времени. Используйте HH:MM, например 03:30.");
         return;
       }
     }
@@ -1873,7 +1904,7 @@ async function handleUpdate(update: any) {
       end_time: endTime,
     });
 
-    await generateSessions(group.id);
+    await generateSessions(group.id, true);
 
     await sendMessage(chatId, `✅ Расписание добавлено: ${DAYS_RU[dayOfWeek]} ${startTime}–${endTime}\n\nСессии сгенерированы на следующую неделю (Пн–Вс).`);
   }
