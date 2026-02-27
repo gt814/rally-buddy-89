@@ -145,11 +145,14 @@ async function getUserAdminGroups(userId: string) {
 }
 
 function formatDate(dateStr: string): string {
-  const d = new Date(dateStr);
-  const dayOfWeek = DAYS_RU[d.getDay()];
-  const day = d.getDate();
-  const month = MONTHS_RU[d.getMonth()];
-  return `${dayOfWeek}, ${day} ${month}`;
+  const [year, month, day] = dateStr.split("-").map(Number);
+  if (!year || !month || !day) return dateStr;
+
+  // Parse date-only values in UTC to avoid weekday shifts caused by server timezone.
+  const d = new Date(Date.UTC(year, month - 1, day));
+  const dayOfWeek = DAYS_RU[d.getUTCDay()];
+  const monthName = MONTHS_RU[d.getUTCMonth()];
+  return `${dayOfWeek}, ${day} ${monthName}`;
 }
 
 function formatTime(time: string, timezone: string = DEFAULT_TIMEZONE): string {
