@@ -17,7 +17,7 @@ PingPong Bot помогает вести группы тренировок по 
 Система состоит из 4 частей:
 
 - Telegram-бот (`supabase/functions/telegram-bot`) — принимает webhook от Telegram, показывает меню, обрабатывает команды и кнопки.
-- Генератор сессий (`supabase/functions/generate-weekly-sessions`) — создаёт тренировки на следующую неделю из шаблонов.
+- Генератор сессий (`supabase/functions/generate-weekly-sessions`) — создаёт тренировки на следующую неделю из шаблонов и рассылает уведомления о публикации расписания.
 - База данных Supabase/Postgres — хранит пользователей, группы, расписания, сессии, записи, страйки.
 - Web-панель (React + Vite) — показывает группы и загрузку тренировок.
 
@@ -105,6 +105,10 @@ PingPong Bot помогает вести группы тренировок по 
 - По `pg_cron` в заданные для группы дату и время запуска (`schedule_generation_day_of_week` + `schedule_generation_time`).
 
 Генерация идемпотентная: используется конфликтный ключ `(group_id, date, start_time)`.
+
+После публикации недельного расписания отправляются уведомления в Telegram:
+- Администраторам группы: `Опубликовано расписание на {week_range}.`
+- Участникам группы: `Опубликовано расписание на {week_range}.` + кнопка `Нажмите, чтобы посмотреть детали.`, которая открывает расписание группы для записи.
 
 ### 3.5 Запись на тренировку
 
@@ -258,6 +262,7 @@ supabase functions deploy generate-weekly-sessions --project-ref <PROJECT_REF>
 
 Примечания:
 - `SUPER_ADMIN_IDS` не обязателен.
+- `TELEGRAM_BOT_TOKEN` используется обеими функциями: `telegram-bot` и `generate-weekly-sessions` (для уведомлений о публикации расписания).
 - `SUPABASE_URL` и `SUPABASE_SERVICE_ROLE_KEY` в Edge Functions предоставляет Supabase.
 
 ### 5.3 Установка webhook

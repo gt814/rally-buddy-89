@@ -17,6 +17,7 @@ const MONTHS_RU = [
   "июля", "августа", "сентября", "октября", "ноября", "декабря",
 ];
 const DEFAULT_TIMEZONE = "Europe/Moscow";
+const WEEK_PUBLICATION_PARTICIPANT_TEXT = "Нажмите, чтобы посмотреть детали.";
 const SCHEDULE_HOURS = Array.from({ length: 16 }, (_, i) => String(i + 8).padStart(2, "0"));
 const SCHEDULE_MINUTES = Array.from({ length: 12 }, (_, i) => String(i * 5).padStart(2, "0"));
 
@@ -193,6 +194,74 @@ function isSessionCompletedNow(date: string, endTime: string): boolean {
   return sessionEnd.getTime() <= Date.now();
 }
 
+function getNextWeekBounds(now = new Date()) {
+  const currentDay = now.getUTCDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+  const daysUntilNextMonday = currentDay === 1 ? 7 : (8 - currentDay) % 7;
+  const nextWeekMonday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  nextWeekMonday.setUTCDate(nextWeekMonday.getUTCDate() + daysUntilNextMonday);
+  const nextWeekSunday = new Date(nextWeekMonday);
+  nextWeekSunday.setUTCDate(nextWeekSunday.getUTCDate() + 6);
+  return { nextWeekMonday, nextWeekSunday };
+}
+
+function formatWeekRange(start: Date, end: Date): string {
+  const format = (date: Date) =>
+    `${String(date.getUTCDate()).padStart(2, "0")}.${String(date.getUTCMonth() + 1).padStart(2, "0")}.${date.getUTCFullYear()}`;
+  return `${format(start)}–${format(end)}`;
+}
+
+async function notifyWeeklySchedulePublished(groupId: string, weekRange: string) {
+  const publicationText = `Опубликовано расписание на ${weekRange}.`;
+
+  const { data: admins } = await supabase
+    .from("group_admins")
+    .select("user_id")
+    .eq("group_id", groupId);
+  const adminUserIds = Array.from(
+    new Set<string>((admins || []).map((a: any) => String(a.user_id)).filter(Boolean))
+  );
+
+  if (adminUserIds.length > 0) {
+    const { data: adminUsers } = await supabase
+      .from("bot_users")
+      .select("telegram_id")
+      .in("id", adminUserIds);
+    for (const admin of adminUsers || []) {
+      if (admin.telegram_id) {
+        await sendMessage(admin.telegram_id, publicationText);
+      }
+    }
+  }
+
+  const { data: members } = await supabase
+    .from("group_members")
+    .select("user_id")
+    .eq("group_id", groupId)
+    .eq("is_banned", false);
+  const participantUserIds = Array.from(
+    new Set<string>((members || []).map((m: any) => String(m.user_id)).filter(Boolean))
+  )
+    .filter((id) => !adminUserIds.includes(id));
+
+  if (participantUserIds.length === 0) return;
+
+  const { data: participants } = await supabase
+    .from("bot_users")
+    .select("telegram_id")
+    .in("id", participantUserIds);
+
+  for (const participant of participants || []) {
+    if (!participant.telegram_id) continue;
+    await sendMessage(
+      participant.telegram_id,
+      `${publicationText}\n\n${WEEK_PUBLICATION_PARTICIPANT_TEXT}`,
+      {
+        inline_keyboard: [[{ text: WEEK_PUBLICATION_PARTICIPANT_TEXT, callback_data: `sched_${groupId}` }]],
+      }
+    );
+  }
+}
+
 // ===== Generate sessions for a group =====
 async function generateSessions(groupId: string, allowUpdates = false) {
   const { data: schedules } = await supabase
@@ -209,11 +278,7 @@ async function generateSessions(groupId: string, allowUpdates = false) {
     .single();
 
   // Generate only for the next calendar week: Monday..Sunday (UTC)
-  const now = new Date();
-  const currentDay = now.getUTCDay(); // 0=Sun, 1=Mon, ..., 6=Sat
-  const daysUntilNextMonday = currentDay === 1 ? 7 : (8 - currentDay) % 7;
-  const nextWeekMonday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  nextWeekMonday.setUTCDate(nextWeekMonday.getUTCDate() + daysUntilNextMonday);
+  const { nextWeekMonday, nextWeekSunday } = getNextWeekBounds();
 
   for (const schedule of schedules) {
     const dayOfWeek = Number(schedule.day_of_week);
@@ -239,6 +304,8 @@ async function generateSessions(groupId: string, allowUpdates = false) {
         { onConflict: "group_id,date,start_time", ignoreDuplicates: !allowUpdates }
       );
   }
+
+  await notifyWeeklySchedulePublished(groupId, formatWeekRange(nextWeekMonday, nextWeekSunday));
 }
 
 // ===== Handlers =====
