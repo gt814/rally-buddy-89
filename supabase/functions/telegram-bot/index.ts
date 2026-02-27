@@ -3,7 +3,6 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN")!;
-const BOT_USERNAME = (Deno.env.get("TELEGRAM_BOT_USERNAME") || "").replace(/^@/, "");
 const SUPER_ADMIN_IDS = (Deno.env.get("SUPER_ADMIN_IDS") || "")
   .split(",")
   .map((id) => parseInt(id.trim()))
@@ -927,9 +926,7 @@ async function handleAdminGroup(chatId: number, messageId: number, user: any, gr
     .eq("group_id", groupId)
     .eq("is_banned", false);
 
-  const inviteLink = BOT_USERNAME
-    ? `t.me/${BOT_USERNAME}?start=join_${group.invite_code}`
-    : `join_${group.invite_code}`;
+  const botName = "your_bot"; // Will be replaced
 
   let text = `⚙️ <b>${group.name}</b>\n\n`;
   text += `👥 Участников: ${members?.length || 0}\n`;
@@ -937,7 +934,7 @@ async function handleAdminGroup(chatId: number, messageId: number, user: any, gr
   text += `⏰ Время фиксации: за ${group.freeze_hours}ч\n`;
   const generationDay = Number(group.schedule_generation_day_of_week ?? 1);
   text += `🗓 Генерация расписания: ${DAYS_FULL_RU[generationDay] || "Понедельник"}, ${formatTime(group.schedule_generation_time || "11:00:00")}\n`;
-  text += `🔗 Инвайт: <code>${inviteLink}</code>`;
+  text += `🔗 Инвайт: <code>t.me/${botName}?start=join_${group.invite_code}</code>`;
 
   const buttons = [
     [{ text: "📅 Ближайшие тренировки", callback_data: `admin_sched_${groupId}` }],

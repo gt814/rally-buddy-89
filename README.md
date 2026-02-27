@@ -263,7 +263,6 @@ supabase functions deploy generate-weekly-sessions --project-ref <PROJECT_REF>
 Примечания:
 - `SUPER_ADMIN_IDS` не обязателен.
 - `TELEGRAM_BOT_TOKEN` используется обеими функциями: `telegram-bot` и `generate-weekly-sessions` (для уведомлений о публикации расписания).
-- `TELEGRAM_BOT_USERNAME` — обычная variable (не secret) для функции `telegram-bot`; укажите имя бота без `@`, используется для deep link `t.me/<bot>?start=join_<invite_code>`.
 - `SUPABASE_URL` и `SUPABASE_SERVICE_ROLE_KEY` в Edge Functions предоставляет Supabase.
 
 ### 5.3 Установка webhook
