@@ -758,7 +758,7 @@ export async function handleAdminEditMenu(deps: Deps, chatId: number, messageId:
   text += `📝 Название: ${group.name}\n`;
   text += `👥 Макс. участников: ${group.max_participants}\n`;
   text += `⏰ Время фиксации: за ${group.freeze_hours}ч\n`;
-  text += `🗓 Генерация расписания: ${DAYS_FULL_RU[Number(group.schedule_generation_day_of_week ?? 1)] || "Понедельник"}, ${formatTime(group.schedule_generation_time || "03:00:00")}\n`;
+  text += `🗓 Генерация расписания: ${DAYS_FULL_RU[Number(group.schedule_generation_day_of_week ?? 1)] || "Понедельник"}, ${formatTime(group.schedule_generation_time || "11:00:00")}\n`;
   text += `🌍 Часовой пояс: ${group.timezone || DEFAULT_TIMEZONE}\n\n`;
   text += `Выберите параметр для изменения:`;
 
@@ -862,7 +862,7 @@ export async function handleAdminEditText(deps: Deps, chatId: number, messageId:
     `или <code>/editgroup ${shortId} timezone UTC+3</code>\n\n` +
     `📅 День запуска: <b>${DAYS_FULL_RU[Number(group?.schedule_generation_day_of_week ?? 1)] || "Понедельник"}</b>\n` +
     `Используйте: <code>/editgroup ${shortId} gendate 1</code>\n\n` +
-    `⏰ Время запуска: <b>${formatTime(group?.schedule_generation_time || "03:00:00")}</b>\n` +
+    `⏰ Время запуска: <b>${formatTime(group?.schedule_generation_time || "11:00:00")}</b>\n` +
     `Используйте: <code>/editgroup ${shortId} gentime 03:30</code>`,
     {
       inline_keyboard: [[{ text: "« Назад", callback_data: `aedit_${groupId}` }]],
