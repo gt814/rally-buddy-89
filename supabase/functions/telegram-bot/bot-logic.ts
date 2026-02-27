@@ -952,7 +952,6 @@ export async function handleAdminConfirmDelete(deps: Deps, chatId: number, messa
 
 // ===== Schedule management handlers =====
 
-const DAYS_FULL_RU = ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"];
 const SCHEDULE_HOURS = Array.from({ length: 16 }, (_, i) => String(i + 8).padStart(2, "0"));
 const SCHEDULE_MINUTES = Array.from({ length: 12 }, (_, i) => String(i * 5).padStart(2, "0"));
 
