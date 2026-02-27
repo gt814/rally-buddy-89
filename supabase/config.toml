@@ -2,3 +2,6 @@ project_id = "gbptjgtbadzrbnbygykd"
 
 [functions.telegram-bot]
 verify_jwt = false
+
+[functions.generate-weekly-sessions]
+verify_jwt = false

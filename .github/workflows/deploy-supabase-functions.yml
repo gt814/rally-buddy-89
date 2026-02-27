@@ -128,6 +128,8 @@ jobs:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       SUPABASE_PROJECT_ID: ${{ vars.SUPABASE_PROJECT_ID }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_WEBHOOK_SECRET: ${{ secrets.TELEGRAM_WEBHOOK_SECRET }}
+      WEEKLY_GENERATOR_SECRET: ${{ secrets.WEEKLY_GENERATOR_SECRET }}
       SUPER_ADMIN_IDS: ${{ vars.SUPER_ADMIN_IDS }}
     steps:
       - name: Checkout
@@ -141,6 +143,14 @@ jobs:
           fi
           if [ -z "${TELEGRAM_BOT_TOKEN}" ]; then
             echo "TELEGRAM_BOT_TOKEN secret is required"
+            exit 1
+          fi
+          if [ -z "${TELEGRAM_WEBHOOK_SECRET}" ]; then
+            echo "TELEGRAM_WEBHOOK_SECRET secret is required"
+            exit 1
+          fi
+          if [ -z "${WEEKLY_GENERATOR_SECRET}" ]; then
+            echo "WEEKLY_GENERATOR_SECRET secret is required"
             exit 1
           fi
 
@@ -168,11 +178,15 @@ jobs:
           if [ -n "${SUPER_ADMIN_IDS}" ]; then
             supabase secrets set \
               TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN}" \
+              TELEGRAM_WEBHOOK_SECRET="${TELEGRAM_WEBHOOK_SECRET}" \
+              WEEKLY_GENERATOR_SECRET="${WEEKLY_GENERATOR_SECRET}" \
               SUPER_ADMIN_IDS="${SUPER_ADMIN_IDS}" \
               --project-ref "${{ steps.project.outputs.ref }}"
           else
             supabase secrets set \
               TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN}" \
+              TELEGRAM_WEBHOOK_SECRET="${TELEGRAM_WEBHOOK_SECRET}" \
+              WEEKLY_GENERATOR_SECRET="${WEEKLY_GENERATOR_SECRET}" \
               --project-ref "${{ steps.project.outputs.ref }}"
           fi
 
@@ -193,7 +207,7 @@ jobs:
           echo "Setting webhook to: ${WEBHOOK_URL}"
           RESPONSE=$(curl -sS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
             -H "Content-Type: application/json" \
-            -d "{\"url\":\"${WEBHOOK_URL}\",\"drop_pending_updates\":false}")
+            -d "{\"url\":\"${WEBHOOK_URL}\",\"secret_token\":\"${TELEGRAM_WEBHOOK_SECRET}\",\"drop_pending_updates\":false}")
           echo "${RESPONSE}"
           echo "${RESPONSE}" | grep -q '"ok":true'
 

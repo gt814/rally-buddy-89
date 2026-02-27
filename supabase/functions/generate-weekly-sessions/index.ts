@@ -2,10 +2,20 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-weekly-generator-secret",
 };
 
 const WEEK_PUBLICATION_PARTICIPANT_TEXT = "Нажмите, чтобы посмотреть детали.";
+const GENERATOR_SECRET = Deno.env.get("WEEKLY_GENERATOR_SECRET") || "";
+
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < a.length; i++) {
+    mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return mismatch === 0;
+}
 
 function getNextWeekBounds(now = new Date()) {
   const currentDay = now.getUTCDay(); // 0=Sun, 1=Mon, ..., 6=Sat
@@ -95,6 +105,29 @@ async function notifyWeeklySchedulePublished(supabase: any, botToken: string, gr
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
+  }
+
+  if (req.method !== "POST") {
+    return new Response(JSON.stringify({ error: "Method not allowed" }), {
+      status: 405,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  if (!GENERATOR_SECRET) {
+    console.error("Missing WEEKLY_GENERATOR_SECRET");
+    return new Response(JSON.stringify({ error: "Generator is not configured" }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  const providedSecret = req.headers.get("x-weekly-generator-secret") || "";
+  if (!timingSafeEqual(providedSecret, GENERATOR_SECRET)) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 
   try {
