@@ -179,6 +179,7 @@ export type Database = {
           invite_code: string
           max_participants: number
           name: string
+          schedule_generation_day_of_week: number
           schedule_generation_time: string
           timezone: string
           updated_at: string
@@ -191,6 +192,7 @@ export type Database = {
           invite_code?: string
           max_participants?: number
           name: string
+          schedule_generation_day_of_week?: number
           schedule_generation_time?: string
           timezone?: string
           updated_at?: string
@@ -203,6 +205,7 @@ export type Database = {
           invite_code?: string
           max_participants?: number
           name?: string
+          schedule_generation_day_of_week?: number
           schedule_generation_time?: string
           timezone?: string
           updated_at?: string

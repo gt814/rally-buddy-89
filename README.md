@@ -102,7 +102,7 @@ PingPong Bot помогает вести группы тренировок по 
 
 Триггеры генерации:
 - При добавлении нового шаблона.
-- По `pg_cron` в заданное для группы время (`schedule_generation_time`).
+- По `pg_cron` в заданные для группы дату и время запуска (`schedule_generation_day_of_week` + `schedule_generation_time`).
 
 Генерация идемпотентная: используется конфликтный ключ `(group_id, date, start_time)`.
 
@@ -218,7 +218,7 @@ PingPong Bot помогает вести группы тренировок по 
 
 ### `/editgroup GROUP_ID ПОЛЕ ЗНАЧЕНИЕ`
 - Меняет параметры группы.
-- Поля: `name`, `max`, `freeze`, `timezone`, `gentime` (в формате `HH:MM`).
+- Поля: `name`, `max`, `freeze`, `timezone`, `gendate` (`0..6`, где `0=Вс`) и `gentime` (в формате `HH:MM`).
 - Доступно админу группы или суперадмину.
 - Можно указывать полный `GROUP_ID` или префикс.
 
